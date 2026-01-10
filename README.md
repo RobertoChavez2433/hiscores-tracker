@@ -11,7 +11,7 @@ A RuneLite plugin that tracks OSRS player stats and gains over time with a compl
 - **Historical Tracking** - Stores up to 1 year of daily snapshots
 - **Auto-Refresh** - Automatic updates every 5 minutes
 - **Daily Navigation** - Browse through past days to see historical gains
-- **Account Type Support** - Track Normal, Ironman, Hardcore Ironman, Ultimate Ironman, Group Ironman accounts
+- **Account Type Support** - Track Normal, Ironman, Hardcore Ironman, and Ultimate Ironman accounts
 
 ## Quick Start
 
