@@ -1,0 +1,33 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# VS Code
+.vscode/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Logs and debug files
+*.log
+*.txt
+
+# Testing tools folder
+testing-tools/
+
+# Temporary files
+*.tmp
+*.temp
