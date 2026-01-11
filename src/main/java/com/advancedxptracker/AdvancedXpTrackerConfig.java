@@ -54,13 +54,13 @@ public interface AdvancedXpTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "dataRetentionDays",
 		name = "Data Retention (Days)",
-		description = "How many days of history to keep (365 = 1 year)",
+		description = "How many days of history to keep (max 180 days)",
 		position = 3,
 		section = refreshSection
 	)
 	default int dataRetentionDays()
 	{
-		return 365; // 1 year
+		return 180; // 6 months
 	}
 
 	// ===== DISPLAY SETTINGS =====

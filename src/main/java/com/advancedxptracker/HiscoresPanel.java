@@ -24,10 +24,17 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class HiscoresPanel extends PluginPanel
 {
+	// Sprite IDs from RuneLite API - VERIFIED by sprite export on 2026-01-11
+	// These match the official RuneLite hiscores plugin sprite IDs
+	private static final int SKILL_SAILING = 228;  // Anchor icon - VERIFIED
+	private static final int HISCORE_DOOM_OF_MOKHAIOTL = 6347;  // Red demon mask - VERIFIED
+	private static final int HISCORE_SHELLBANE_GRYPHON = 6349;  // Orange/tan creature - VERIFIED
+
 	private final HiscoresClient hiscoresClient;
 	private final StatsDataManager dataManager;
 	private final ScheduledExecutorService executor;
 	private final SpriteManager spriteManager;
+	private final java.io.PrintWriter debugLog;
 
 	// UI Components
 	private JComboBox<String> playerSelector;
@@ -52,6 +59,23 @@ public class HiscoresPanel extends PluginPanel
 		this.dataManager = dataManager;
 		this.executor = executor;
 		this.spriteManager = spriteManager;
+
+		// Initialize debug log
+		java.io.PrintWriter tempLog = null;
+		try {
+			String userHome = System.getProperty("user.home");
+			String logPath = userHome + "\\Documents\\Runescape\\Plugins\\advanced-xp-tracker-v2\\testing-tools\\hiscores-panel-debug.log";
+			java.io.File logFile = new java.io.File(logPath);
+			logFile.getParentFile().mkdirs();
+			tempLog = new java.io.PrintWriter(new java.io.FileWriter(logFile, false)); // false = overwrite
+			tempLog.println("=".repeat(80));
+			tempLog.println("HISCORES PANEL DEBUG LOG - " + new java.util.Date());
+			tempLog.println("=".repeat(80));
+			tempLog.flush();
+		} catch (Exception e) {
+			log.error("Failed to create debug log", e);
+		}
+		this.debugLog = tempLog;
 
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -102,15 +126,34 @@ public class HiscoresPanel extends PluginPanel
 		// Load tracked players
 		refreshPlayerList();
 
-		// Initial load
-		if (playerSelector.getItemCount() > 0)
-		{
+		// Initial load - show blank stats, don't auto-load player
+		log.info("========== CALLING displayBlankStats() on initialization ==========");
+		if (debugLog != null) {
+			debugLog.println("INITIALIZATION: About to call displayBlankStats()");
+			debugLog.println("Player selector item count: " + playerSelector.getItemCount());
+			debugLog.println("Player selector selected index: " + playerSelector.getSelectedIndex());
+			debugLog.println("Player selector selected item: " + playerSelector.getSelectedItem());
+			debugLog.flush();
+		}
+		displayBlankStats();
+		log.info("========== displayBlankStats() completed ==========");
+		if (debugLog != null) {
+			debugLog.println("INITIALIZATION: displayBlankStats() completed");
+			debugLog.println("Content panel component count: " + contentPanel.getComponentCount());
+			debugLog.flush();
+		}
+
+		// Add action listener AFTER initial setup to avoid triggering during initialization
+		playerSelector.addActionListener(e -> {
+			log.info("Player selector action triggered, selected: {}", playerSelector.getSelectedItem());
+			if (debugLog != null) {
+				debugLog.println("\nACTION LISTENER: Player selector changed");
+				debugLog.println("Selected item: " + playerSelector.getSelectedItem());
+				debugLog.println("Selected index: " + playerSelector.getSelectedIndex());
+				debugLog.flush();
+			}
 			loadPlayerData();
-		}
-		else
-		{
-			showWelcomeMessage();
-		}
+		});
 	}
 
 	private JPanel createTopPanel()
@@ -129,7 +172,7 @@ public class HiscoresPanel extends PluginPanel
 		playerRow.add(playerLabel, BorderLayout.WEST);
 
 		// Configure playerSelector (already initialized)
-		playerSelector.addActionListener(e -> loadPlayerData());
+		// Note: Action listener will be added after initial setup to avoid triggering during initialization
 		playerRow.add(playerSelector, BorderLayout.CENTER);
 
 		// Configure add/remove buttons (already initialized)
@@ -229,6 +272,8 @@ public class HiscoresPanel extends PluginPanel
 			log.info("Adding player to selector: {}", player);
 			playerSelector.addItem(player);
 		}
+		// Deselect any auto-selected item to prevent auto-loading
+		playerSelector.setSelectedIndex(-1);
 		log.info("Player list refresh complete. Selector now has {} items", playerSelector.getItemCount());
 	}
 
@@ -298,7 +343,7 @@ public class HiscoresPanel extends PluginPanel
 						"Failed to fetch player data: " + e.getMessage(),
 						"Error",
 						JOptionPane.ERROR_MESSAGE);
-					showWelcomeMessage();
+					displayBlankStats();
 					contentPanel.revalidate();
 					contentPanel.repaint();
 				});
@@ -330,18 +375,10 @@ public class HiscoresPanel extends PluginPanel
 			dataManager.removePlayer(selectedPlayer);
 			refreshPlayerList();
 
-			// Clear display if no players left
-			if (playerSelector.getItemCount() == 0)
-			{
-				currentStats = null;
-				currentGains = null;
-				showWelcomeMessage();
-			}
-			else
-			{
-				// Load the first player in the list
-				loadPlayerData();
-			}
+			// Reset to blank stats
+			currentStats = null;
+			currentGains = null;
+			displayBlankStats();
 
 			contentPanel.revalidate();
 			contentPanel.repaint();
@@ -351,8 +388,12 @@ public class HiscoresPanel extends PluginPanel
 	private void loadPlayerData()
 	{
 		String selectedPlayer = (String) playerSelector.getSelectedItem();
-		if (selectedPlayer == null)
+		if (selectedPlayer == null || selectedPlayer.trim().isEmpty())
 		{
+			// No player selected - show blank stats
+			currentStats = null;
+			currentGains = null;
+			displayBlankStats();
 			return;
 		}
 
@@ -496,7 +537,7 @@ public class HiscoresPanel extends PluginPanel
 
 		if (currentStats == null)
 		{
-			showWelcomeMessage();
+			displayBlankStats();
 			return;
 		}
 
@@ -575,7 +616,7 @@ public class HiscoresPanel extends PluginPanel
 			"Overall", "Attack", "Defence", "Strength", "Hitpoints", "Ranged", "Prayer", "Magic",
 			"Cooking", "Woodcutting", "Fletching", "Fishing", "Firemaking", "Crafting",
 			"Smithing", "Mining", "Herblore", "Agility", "Thieving", "Slayer", "Farming",
-			"Runecraft", "Hunter", "Construction"
+			"Runecraft", "Hunter", "Construction", "Sailing"
 		};
 
 		for (String skillName : skillNames)
@@ -1064,8 +1105,413 @@ public class HiscoresPanel extends PluginPanel
 		return container;
 	}
 
+	/**
+	 * Display blank/default stats (Lvl 1, Rank: Unranked, 0 XP)
+	 */
+	private void displayBlankStats()
+	{
+		log.info("displayBlankStats() - START");
+		if (debugLog != null) {
+			debugLog.println("\ndisplayBlankStats() - CALLED");
+			debugLog.println("Stack trace:");
+			for (StackTraceElement ste : Thread.currentThread().getStackTrace()) {
+				debugLog.println("  " + ste);
+			}
+			debugLog.flush();
+		}
+		contentPanel.removeAll();
+		log.info("displayBlankStats() - Content panel cleared");
+
+		// Add skills section with default values
+		addSection("Skills", createBlankSkillsPanel());
+		log.info("displayBlankStats() - Added Skills section");
+
+		// Add clues section with default values
+		addSection("Clue Scrolls Completed", createBlankCluesPanel());
+		log.info("displayBlankStats() - Added Clues section");
+
+		// Add activities section with default values
+		addSection("Activities", createBlankActivitiesPanel());
+		log.info("displayBlankStats() - Added Activities section");
+
+		// Add bosses section with default values
+		addSection("Boss Kill Count", createBlankBossesPanel());
+		log.info("displayBlankStats() - Added Bosses section");
+
+		contentPanel.revalidate();
+		contentPanel.repaint();
+		log.info("displayBlankStats() - Revalidated and repainted. Component count: {}", contentPanel.getComponentCount());
+	}
+
+	private JPanel createBlankSkillsPanel()
+	{
+		JPanel panel = new JPanel();
+		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+
+		String[] skillNames = {
+			"Overall", "Attack", "Defence", "Strength", "Hitpoints", "Ranged", "Prayer", "Magic",
+			"Cooking", "Woodcutting", "Fletching", "Fishing", "Firemaking", "Crafting",
+			"Smithing", "Mining", "Herblore", "Agility", "Thieving", "Slayer", "Farming",
+			"Runecraft", "Hunter", "Construction", "Sailing"
+		};
+
+		for (String skillName : skillNames)
+		{
+			panel.add(createBlankStatRow(skillName));
+		}
+
+		return panel;
+	}
+
+	private JPanel createBlankCluesPanel()
+	{
+		JPanel panel = new JPanel();
+		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+
+		String[][] clueTypes = {
+			{"All Clues", "clue_all"},
+			{"Beginner Clues", "clue_beginner"},
+			{"Easy Clues", "clue_easy"},
+			{"Medium Clues", "clue_medium"},
+			{"Hard Clues", "clue_hard"},
+			{"Elite Clues", "clue_elite"},
+			{"Master Clues", "clue_master"}
+		};
+
+		for (String[] clueType : clueTypes)
+		{
+			panel.add(createBlankClueRow(clueType[0], clueType[1]));
+		}
+
+		return panel;
+	}
+
+	private JPanel createBlankActivitiesPanel()
+	{
+		JPanel panel = new JPanel();
+		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+
+		String[] activityNames = {
+			"League Points", "Bounty Hunter Hunter", "Bounty Hunter Rogue",
+			"LMS", "PvP Arena", "Soul Wars", "Rifts Closed", "Colosseum Glory", "Collections Logged"
+		};
+
+		for (String activityName : activityNames)
+		{
+			String key = activityName.toLowerCase().replace(" ", "_");
+			panel.add(createBlankActivityRow(activityName, key));
+		}
+
+		return panel;
+	}
+
+	private JPanel createBlankBossesPanel()
+	{
+		JPanel panel = new JPanel();
+		panel.setLayout(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+
+		GridBagConstraints c = new GridBagConstraints();
+		c.fill = GridBagConstraints.HORIZONTAL;
+		c.weightx = 1.0;
+		c.gridx = 0;
+		c.gridy = 0;
+		c.insets = new Insets(2, 2, 2, 2);
+
+		String[] bossNames = {
+			"Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "Artio", "Barrows",
+			"Bryophyta", "Callisto", "Calvarion", "Cerberus", "Chambers of Xeric", "Chambers of Xeric CM",
+			"Chaos Elemental", "Chaos Fanatic", "Commander Zilyana", "Corporeal Beast",
+			"Crazy Archaeologist", "Dagannoth Prime", "Dagannoth Rex", "Dagannoth Supreme",
+			"Deranged Archaeologist", "Doom of Mokhaiotl", "Duke Sucellus", "General Graardor", "Giant Mole",
+			"Grotesque Guardians", "Hespori", "Kalphite Queen", "King Black Dragon",
+			"Kraken", "Kree'arra", "K'ril Tsutsaroth", "Lunar Chests", "Mimic", "Nex", "Nightmare",
+			"Phosani's Nightmare", "Obor", "Phantom Muspah", "Sarachnis", "Scorpia", "Scurrius",
+			"Shellbane Gryphon", "Skotizo", "Sol Heredit", "Spindel", "Tempoross",
+			"The Gauntlet", "The Corrupted Gauntlet", "The Hueycoatl", "The Leviathan",
+			"The Royal Titans", "The Whisperer", "Theatre of Blood", "Theatre of Blood HM",
+			"Thermonuclear Smoke Devil", "Tombs of Amascut", "Tombs of Amascut Expert",
+			"TzKal-Zuk", "TzTok-Jad", "Vardorvis", "Venenatis", "Vet'ion", "Vorkath",
+			"Wintertodt", "Yama", "Zalcano", "Zulrah"
+		};
+
+		int column = 0;
+		for (String bossName : bossNames)
+		{
+			String key = bossName.toLowerCase().replace(" ", "_").replace("'", "").replace("-", "_");
+			c.gridx = column;
+			panel.add(createBlankBossIconRow(bossName, key), c);
+
+			column++;
+			if (column >= 3)
+			{
+				column = 0;
+				c.gridy++;
+			}
+		}
+
+		return panel;
+	}
+
+	private JPanel createBlankStatRow(String name)
+	{
+		JPanel container = new JPanel();
+		container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
+		container.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		container.setBorder(new EmptyBorder(3, 5, 3, 5));
+		container.setMaximumSize(new Dimension(Integer.MAX_VALUE, 48));
+
+		String tooltip = "<html><b>" + name + "</b><br>Rank: Unranked<br>Level: 1<br>Experience: 0</html>";
+
+		// First row: Name, Level, and Rank
+		JPanel firstRow = new JPanel();
+		firstRow.setLayout(new BoxLayout(firstRow, BoxLayout.X_AXIS));
+		firstRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		firstRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+
+		JLabel nameLabel = new JLabel(name + " lvl 1");
+		nameLabel.setForeground(Color.WHITE);
+		nameLabel.setFont(new Font("Serif", Font.PLAIN, 13));
+		nameLabel.setToolTipText(tooltip);
+		firstRow.add(nameLabel);
+
+		firstRow.add(Box.createHorizontalGlue());
+
+		// Add skill icon
+		JLabel iconLabel = new JLabel();
+		iconLabel.setPreferredSize(new Dimension(20, 20));
+		iconLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		iconLabel.setToolTipText(tooltip);
+		firstRow.add(iconLabel);
+
+		// Load icon asynchronously
+		int spriteId = getSkillSpriteId(name);
+		if (spriteId != -1)
+		{
+			spriteManager.getSpriteAsync(spriteId, 0, (sprite) ->
+				SwingUtilities.invokeLater(() ->
+				{
+					final BufferedImage scaledSprite = ImageUtil.resizeImage(ImageUtil.resizeCanvas(sprite, 25, 25), 20, 20);
+					iconLabel.setIcon(new ImageIcon(scaledSprite));
+				}));
+		}
+
+		firstRow.add(Box.createHorizontalGlue());
+
+		JLabel rankLabel = new JLabel("Rank: Unranked");
+		rankLabel.setForeground(Color.GRAY);
+		rankLabel.setFont(new Font("Serif", Font.PLAIN, 12));
+		rankLabel.setToolTipText(tooltip);
+		firstRow.add(rankLabel);
+
+		// Second row: XP
+		JPanel secondRow = new JPanel(new BorderLayout());
+		secondRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		secondRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+
+		JLabel xpLabel = new JLabel("0 XP");
+		xpLabel.setForeground(Color.GRAY);
+		xpLabel.setFont(new Font("Serif", Font.PLAIN, 12));
+		xpLabel.setToolTipText(tooltip);
+		secondRow.add(xpLabel, BorderLayout.WEST);
+
+		container.add(firstRow);
+		container.add(secondRow);
+		container.setToolTipText(tooltip);
+		return container;
+	}
+
+	private JPanel createBlankClueRow(String name, String key)
+	{
+		JPanel container = new JPanel();
+		container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
+		container.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		container.setBorder(new EmptyBorder(3, 5, 3, 5));
+		container.setMaximumSize(new Dimension(Integer.MAX_VALUE, 48));
+
+		String tooltip = "<html><b>" + name + "</b><br>Rank: Unranked<br>Clues Completed: 0</html>";
+
+		// First row: Name, Icon, and Rank
+		JPanel firstRow = new JPanel();
+		firstRow.setLayout(new BoxLayout(firstRow, BoxLayout.X_AXIS));
+		firstRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		firstRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+
+		JLabel nameLabel = new JLabel(name);
+		nameLabel.setForeground(Color.WHITE);
+		nameLabel.setFont(new Font("Serif", Font.PLAIN, 13));
+		nameLabel.setToolTipText(tooltip);
+		firstRow.add(nameLabel);
+
+		firstRow.add(Box.createHorizontalGlue());
+
+		// Add icon
+		JLabel iconLabel = new JLabel();
+		iconLabel.setPreferredSize(new Dimension(20, 20));
+		iconLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		iconLabel.setToolTipText(tooltip);
+		firstRow.add(iconLabel);
+
+		// Load icon asynchronously
+		int spriteId = getActivitySpriteId(key);
+		if (spriteId != -1)
+		{
+			spriteManager.getSpriteAsync(spriteId, 0, (sprite) ->
+				SwingUtilities.invokeLater(() ->
+				{
+					final BufferedImage scaledSprite = ImageUtil.resizeImage(ImageUtil.resizeCanvas(sprite, 25, 25), 20, 20);
+					iconLabel.setIcon(new ImageIcon(scaledSprite));
+				}));
+		}
+
+		firstRow.add(Box.createHorizontalGlue());
+
+		JLabel rankLabel = new JLabel("Rank: Unranked");
+		rankLabel.setForeground(Color.GRAY);
+		rankLabel.setFont(new Font("Serif", Font.PLAIN, 12));
+		rankLabel.setToolTipText(tooltip);
+		firstRow.add(rankLabel);
+
+		// Second row: Completed count
+		JPanel secondRow = new JPanel(new BorderLayout());
+		secondRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		secondRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+
+		JLabel completedLabel = new JLabel("Completed: 0");
+		completedLabel.setForeground(Color.GRAY);
+		completedLabel.setFont(new Font("Serif", Font.PLAIN, 12));
+		completedLabel.setToolTipText(tooltip);
+		secondRow.add(completedLabel, BorderLayout.WEST);
+
+		container.add(firstRow);
+		container.add(secondRow);
+		container.setToolTipText(tooltip);
+		return container;
+	}
+
+	private JPanel createBlankActivityRow(String name, String key)
+	{
+		JPanel container = new JPanel();
+		container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
+		container.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		container.setBorder(new EmptyBorder(3, 5, 3, 5));
+		container.setMaximumSize(new Dimension(Integer.MAX_VALUE, 48));
+
+		String tooltip = "<html><b>" + name + "</b><br>Rank: Unranked<br>Score: 0</html>";
+
+		// First row: Name, Icon, and Rank
+		JPanel firstRow = new JPanel();
+		firstRow.setLayout(new BoxLayout(firstRow, BoxLayout.X_AXIS));
+		firstRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		firstRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+
+		JLabel nameLabel = new JLabel(name);
+		nameLabel.setForeground(Color.WHITE);
+		nameLabel.setFont(new Font("Serif", Font.PLAIN, 13));
+		nameLabel.setToolTipText(tooltip);
+		firstRow.add(nameLabel);
+
+		firstRow.add(Box.createHorizontalGlue());
+
+		// Add icon
+		JLabel iconLabel = new JLabel();
+		iconLabel.setPreferredSize(new Dimension(20, 20));
+		iconLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		iconLabel.setToolTipText(tooltip);
+		firstRow.add(iconLabel);
+
+		// Load icon asynchronously
+		int spriteId = getActivitySpriteId(key);
+		if (spriteId != -1)
+		{
+			spriteManager.getSpriteAsync(spriteId, 0, (sprite) ->
+				SwingUtilities.invokeLater(() ->
+				{
+					final BufferedImage scaledSprite = ImageUtil.resizeImage(ImageUtil.resizeCanvas(sprite, 25, 25), 20, 20);
+					iconLabel.setIcon(new ImageIcon(scaledSprite));
+				}));
+		}
+
+		firstRow.add(Box.createHorizontalGlue());
+
+		JLabel rankLabel = new JLabel("Rank: Unranked");
+		rankLabel.setForeground(Color.GRAY);
+		rankLabel.setFont(new Font("Serif", Font.PLAIN, 12));
+		rankLabel.setToolTipText(tooltip);
+		firstRow.add(rankLabel);
+
+		// Second row: Score
+		JPanel secondRow = new JPanel(new BorderLayout());
+		secondRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		secondRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+
+		JLabel scoreLabel = new JLabel("Score: 0");
+		scoreLabel.setForeground(Color.GRAY);
+		scoreLabel.setFont(new Font("Serif", Font.PLAIN, 12));
+		scoreLabel.setToolTipText(tooltip);
+		secondRow.add(scoreLabel, BorderLayout.WEST);
+
+		container.add(firstRow);
+		container.add(secondRow);
+		container.setToolTipText(tooltip);
+		return container;
+	}
+
+	private JPanel createBlankBossIconRow(String name, String key)
+	{
+		String tooltip = "<html><b>" + name + "</b><br>Rank: Unranked<br>KC: 0</html>";
+
+		JPanel container = new JPanel();
+		container.setLayout(new BoxLayout(container, BoxLayout.X_AXIS));
+		container.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		container.setBorder(new EmptyBorder(2, 3, 2, 3));
+
+		// Boss icon
+		JLabel iconLabel = new JLabel();
+		iconLabel.setPreferredSize(new Dimension(20, 20));
+		iconLabel.setToolTipText(tooltip);
+		container.add(iconLabel);
+
+		// Load icon asynchronously
+		int spriteId = getActivitySpriteId(key);
+		if (spriteId != -1)
+		{
+			spriteManager.getSpriteAsync(spriteId, 0, (sprite) ->
+				SwingUtilities.invokeLater(() ->
+				{
+					final BufferedImage scaledSprite = ImageUtil.resizeImage(ImageUtil.resizeCanvas(sprite, 25, 25), 20, 20);
+					iconLabel.setIcon(new ImageIcon(scaledSprite));
+				}));
+		}
+
+		container.add(Box.createHorizontalStrut(5));
+
+		// KC count
+		JLabel kcLabel = new JLabel("0");
+		kcLabel.setForeground(Color.WHITE);
+		kcLabel.setFont(new Font("Serif", Font.PLAIN, 12));
+		kcLabel.setToolTipText(tooltip);
+		container.add(kcLabel);
+
+		container.setToolTipText(tooltip);
+		return container;
+	}
+
 	private void showWelcomeMessage()
 	{
+		log.warn("========== showWelcomeMessage() CALLED - THIS SHOULD NOT HAPPEN ON BLANK STATE ==========");
+		log.warn("Stack trace:", new Exception("Welcome message call trace"));
+		if (debugLog != null) {
+			debugLog.println("\n!!! WARNING: showWelcomeMessage() WAS CALLED !!!");
+			debugLog.println("This method should NOT be called! Stack trace:");
+			for (StackTraceElement ste : Thread.currentThread().getStackTrace()) {
+				debugLog.println("  " + ste);
+			}
+			debugLog.flush();
+		}
 		JLabel welcomeLabel = new JLabel("<html><center>Welcome!<br><br>Click '+' to add a player to track</center></html>");
 		welcomeLabel.setForeground(Color.WHITE);
 		welcomeLabel.setHorizontalAlignment(SwingConstants.CENTER);
@@ -1126,6 +1572,10 @@ public class HiscoresPanel extends PluginPanel
 			case "runecraft": return SpriteID.SKILL_RUNECRAFT;
 			case "hunter": return SpriteID.SKILL_HUNTER;
 			case "construction": return SpriteID.SKILL_CONSTRUCTION;
+			case "sailing":
+				// Sailing skill added Nov 2025
+				// Using direct sprite ID until RuneLite API is updated
+				return SKILL_SAILING;
 			default: return -1;
 		}
 	}
@@ -1180,7 +1630,9 @@ public class HiscoresPanel extends PluginPanel
 			case "dagannoth_rex": return SpriteID.HISCORE_DAGANNOTH_REX;
 			case "dagannoth_supreme": return SpriteID.HISCORE_DAGANNOTH_SUPREME;
 			case "deranged_archaeologist": return SpriteID.HISCORE_DERANGED_ARCHAEOLOGIST;
-			case "doom_of_mokhaiotl": return -1; // No sprite yet
+			case "doom_of_mokhaiotl":
+				// Doom of Mokhaiotl (Sailing boss, Nov 2025)
+				return HISCORE_DOOM_OF_MOKHAIOTL;
 			case "duke_sucellus": return SpriteID.HISCORE_DUKE_SUCELLUS;
 			case "general_graardor": return SpriteID.HISCORE_GENERAL_GRAARDOR;
 			case "giant_mole": return SpriteID.HISCORE_GIANT_MOLE;
@@ -1201,7 +1653,9 @@ public class HiscoresPanel extends PluginPanel
 			case "sarachnis": return SpriteID.HISCORE_SARACHNIS;
 			case "scorpia": return SpriteID.HISCORE_SCORPIA;
 			case "scurrius": return SpriteID.HISCORE_SCURRIUS;
-			case "shellbane_gryphon": return -1; // No sprite yet
+			case "shellbane_gryphon":
+				// Shellbane Gryphon (Sailing boss, Nov 2025)
+				return HISCORE_SHELLBANE_GRYPHON;
 			case "skotizo": return SpriteID.HISCORE_SKOTIZO;
 			case "sol_heredit": return SpriteID.HISCORE_SOL_HEREDIT;
 			case "spindel": return SpriteID.HISCORE_SPINDEL_VENENATIS;
@@ -1217,8 +1671,8 @@ public class HiscoresPanel extends PluginPanel
 			case "thermonuclear_smoke_devil": return SpriteID.HISCORE_THERMONUCLEAR_SMOKE_DEVIL;
 			case "tombs_of_amascut": return SpriteID.HISCORE_TOMBS_OF_AMASCUT;
 			case "tombs_of_amascut_expert": return SpriteID.HISCORE_TOMBS_OF_AMASCUT_EXPERT;
-			case "tzkalzuk": return SpriteID.HISCORE_TZKAL_ZUK;
-			case "tztokjad": return SpriteID.HISCORE_TZTOK_JAD;
+			case "tzkal_zuk": return SpriteID.HISCORE_TZKAL_ZUK;
+			case "tztok_jad": return SpriteID.HISCORE_TZTOK_JAD;
 			case "vardorvis": return SpriteID.HISCORE_VARDORVIS;
 			case "venenatis": return SpriteID.HISCORE_SPINDEL_VENENATIS;
 			case "vetion": return SpriteID.HISCORE_CALVARION_VETION;

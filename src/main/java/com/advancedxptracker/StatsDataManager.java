@@ -1,35 +1,141 @@
 package com.advancedxptracker;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.config.ConfigManager;
 
+import java.io.*;
 import java.lang.reflect.Type;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Manages historical snapshots of player stats
+ * Manages historical snapshots of player stats using a separate JSON file
+ * Account types are still stored in ConfigManager for user preferences
  */
 @Slf4j
 public class StatsDataManager
 {
 	private static final String CONFIG_GROUP = "advancedxptracker";
-	private static final String CONFIG_KEY_PREFIX = "player_";
 	private static final String ACCOUNT_TYPE_KEY_PREFIX = "accounttype_";
-	private static final Gson GSON = new Gson();
-	private static final long MAX_SNAPSHOT_AGE = TimeUnit.DAYS.toMillis(365); // Keep 1 year
+	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+	private static final long MAX_SNAPSHOT_AGE = TimeUnit.DAYS.toMillis(180); // Keep 180 days
+	private static final String DATA_FILE_NAME = "hiscores-tracker-data.json";
 
 	private final ConfigManager configManager;
+	private final File dataFile;
+	private Map<String, List<PlayerStats>> allPlayerData;
 
 	public StatsDataManager(ConfigManager configManager)
 	{
 		this.configManager = configManager;
+
+		// Get RuneLite directory (~/.runelite)
+		String runelitePath = System.getProperty("user.home") + File.separator + ".runelite";
+		this.dataFile = new File(runelitePath, DATA_FILE_NAME);
+
+		// Load all data from file
+		loadAllData();
+
+		// Clean up old snapshots on startup
+		cleanupOldSnapshots();
+
+		log.info("StatsDataManager initialized with data file: {}", dataFile.getAbsolutePath());
 	}
 
 	/**
-	 * Save account type for a player
+	 * Load all player data from JSON file
+	 */
+	private void loadAllData()
+	{
+		if (!dataFile.exists())
+		{
+			log.info("Data file doesn't exist yet, starting fresh");
+			allPlayerData = new HashMap<>();
+			return;
+		}
+
+		try (Reader reader = new FileReader(dataFile))
+		{
+			Type type = new TypeToken<Map<String, List<PlayerStats>>>(){}.getType();
+			allPlayerData = GSON.fromJson(reader, type);
+
+			if (allPlayerData == null)
+			{
+				allPlayerData = new HashMap<>();
+			}
+
+			log.info("Loaded data for {} players from file", allPlayerData.size());
+		}
+		catch (Exception e)
+		{
+			log.error("Failed to load data file, starting fresh", e);
+			allPlayerData = new HashMap<>();
+		}
+	}
+
+	/**
+	 * Save all player data to JSON file
+	 */
+	private void saveAllData()
+	{
+		try
+		{
+			// Create parent directory if it doesn't exist
+			if (!dataFile.getParentFile().exists())
+			{
+				dataFile.getParentFile().mkdirs();
+			}
+
+			try (Writer writer = new FileWriter(dataFile))
+			{
+				GSON.toJson(allPlayerData, writer);
+			}
+
+			log.info("Saved data for {} players to file", allPlayerData.size());
+		}
+		catch (Exception e)
+		{
+			log.error("Failed to save data file", e);
+		}
+	}
+
+	/**
+	 * Clean up snapshots older than 180 days for all players
+	 */
+	private void cleanupOldSnapshots()
+	{
+		long cutoffTime = System.currentTimeMillis() - MAX_SNAPSHOT_AGE;
+		int totalRemoved = 0;
+
+		for (Map.Entry<String, List<PlayerStats>> entry : allPlayerData.entrySet())
+		{
+			List<PlayerStats> snapshots = entry.getValue();
+			int beforeSize = snapshots.size();
+			snapshots.removeIf(s -> s.getTimestamp() < cutoffTime);
+			int removed = beforeSize - snapshots.size();
+
+			if (removed > 0)
+			{
+				totalRemoved += removed;
+				log.info("Removed {} old snapshots for player '{}'", removed, entry.getKey());
+			}
+		}
+
+		if (totalRemoved > 0)
+		{
+			saveAllData();
+			log.info("Cleanup complete: removed {} total old snapshots", totalRemoved);
+		}
+	}
+
+	/**
+	 * Save account type for a player (stored in ConfigManager)
 	 */
 	public void saveAccountType(String username, AccountType accountType)
 	{
@@ -48,15 +154,12 @@ public class StatsDataManager
 
 		if (typeName == null || typeName.isEmpty())
 		{
-			log.info("No account type found for '{}', defaulting to NORMAL", username);
 			return AccountType.NORMAL;
 		}
 
 		try
 		{
-			AccountType type = AccountType.valueOf(typeName);
-			log.info("Loaded account type '{}' for player '{}'", type.getDisplayName(), username);
-			return type;
+			return AccountType.valueOf(typeName);
 		}
 		catch (IllegalArgumentException e)
 		{
@@ -70,39 +173,29 @@ public class StatsDataManager
 	 */
 	public void saveSnapshot(PlayerStats stats)
 	{
-		log.info("========================================");
-		log.info("SAVING SNAPSHOT for username: '{}'", stats.getUsername());
-		log.info("========================================");
+		log.info("Saving snapshot for username: '{}'", stats.getUsername());
 
-		String key = CONFIG_KEY_PREFIX + stats.getUsername().toLowerCase();
-		log.info("Config key will be: '{}'", key);
-
-		List<PlayerStats> snapshots = loadSnapshots(stats.getUsername());
-		log.info("Loaded {} existing snapshots", snapshots.size());
+		String key = stats.getUsername().toLowerCase();
+		List<PlayerStats> snapshots = allPlayerData.computeIfAbsent(key, k -> new ArrayList<>());
 
 		// Add new snapshot
 		snapshots.add(stats);
-		log.info("Added new snapshot. Total snapshots now: {}", snapshots.size());
+		log.info("Added new snapshot. Total snapshots: {}", snapshots.size());
 
-		// Sample some activity data from the new snapshot
-		log.info("Sample activities from NEW snapshot:");
-		stats.getActivities().entrySet().stream()
-			.filter(e -> e.getValue().getScore() > 0)
-			.limit(10)
-			.forEach(e -> log.info("  '{}': score={}", e.getKey(), e.getValue().getScore()));
-
-		// Remove old snapshots (older than 1 year)
+		// Remove old snapshots (older than 180 days)
 		long cutoffTime = System.currentTimeMillis() - MAX_SNAPSHOT_AGE;
+		int beforeSize = snapshots.size();
 		snapshots.removeIf(s -> s.getTimestamp() < cutoffTime);
-		log.info("After cleanup: {} snapshots remain", snapshots.size());
+		int removed = beforeSize - snapshots.size();
 
-		// Save back to config
-		String json = GSON.toJson(snapshots);
-		log.info("JSON length to save: {} characters", json.length());
-		configManager.setConfiguration(CONFIG_GROUP, key, json);
+		if (removed > 0)
+		{
+			log.info("Removed {} old snapshots", removed);
+		}
 
+		// Save to file
+		saveAllData();
 		log.info("✅ Saved snapshot for '{}' ({} total snapshots)", stats.getUsername(), snapshots.size());
-		log.info("========================================");
 	}
 
 	/**
@@ -110,25 +203,9 @@ public class StatsDataManager
 	 */
 	public List<PlayerStats> loadSnapshots(String username)
 	{
-		String key = CONFIG_KEY_PREFIX + username.toLowerCase();
-		String json = configManager.getConfiguration(CONFIG_GROUP, key);
-
-		if (json == null || json.isEmpty())
-		{
-			return new ArrayList<>();
-		}
-
-		try
-		{
-			Type listType = new TypeToken<List<PlayerStats>>(){}.getType();
-			List<PlayerStats> snapshots = GSON.fromJson(json, listType);
-			return snapshots != null ? snapshots : new ArrayList<>();
-		}
-		catch (Exception e)
-		{
-			log.error("Failed to load snapshots for {}", username, e);
-			return new ArrayList<>();
-		}
+		String key = username.toLowerCase();
+		List<PlayerStats> snapshots = allPlayerData.get(key);
+		return snapshots != null ? new ArrayList<>(snapshots) : new ArrayList<>();
 	}
 
 	/**
@@ -180,18 +257,19 @@ public class StatsDataManager
 	 */
 	public void removePlayer(String username)
 	{
-		log.info("========================================");
-		log.info("REMOVING PLAYER: '{}'", username);
-		log.info("========================================");
+		log.info("Removing player: '{}'", username);
 
-		String dataKey = CONFIG_KEY_PREFIX + username.toLowerCase();
+		String key = username.toLowerCase();
 		String typeKey = ACCOUNT_TYPE_KEY_PREFIX + username.toLowerCase();
 
-		configManager.unsetConfiguration(CONFIG_GROUP, dataKey);
+		// Remove from data file
+		allPlayerData.remove(key);
+		saveAllData();
+
+		// Remove account type from config
 		configManager.unsetConfiguration(CONFIG_GROUP, typeKey);
 
 		log.info("✅ Removed player '{}' and all associated data", username);
-		log.info("========================================");
 	}
 
 	/**
@@ -200,41 +278,19 @@ public class StatsDataManager
 	public List<String> getTrackedPlayers()
 	{
 		List<String> players = new ArrayList<>();
-		// Get all keys for this config group
-		List<String> keys = configManager.getConfigurationKeys(CONFIG_GROUP);
 
-		log.info("getConfigurationKeys returned: {}", keys);
-
-		if (keys != null)
+		for (Map.Entry<String, List<PlayerStats>> entry : allPlayerData.entrySet())
 		{
-			for (String fullKey : keys)
+			List<PlayerStats> snapshots = entry.getValue();
+			if (!snapshots.isEmpty())
 			{
-				log.info("Checking key: {}", fullKey);
-				// Keys come back as "configgroup.keyname", extract just the keyname part
-				String[] parts = fullKey.split("\\.", 2);
-				if (parts.length == 2)
-				{
-					String keyName = parts[1];
-					log.info("KeyName extracted: {}", keyName);
-					if (keyName.startsWith(CONFIG_KEY_PREFIX))
-					{
-						String usernameKey = keyName.substring(CONFIG_KEY_PREFIX.length());
-						log.info("Username key extracted: {}", usernameKey);
-						// Load the actual username from the first snapshot (preserves original casing)
-						List<PlayerStats> snapshots = loadSnapshots(usernameKey);
-						log.info("Loaded {} snapshots for key: {}", snapshots.size(), usernameKey);
-						if (!snapshots.isEmpty())
-						{
-							String username = snapshots.get(0).getUsername();
-							log.info("Adding player with original casing: {}", username);
-							players.add(username);
-						}
-					}
-				}
+				// Use original casing from first snapshot
+				String username = snapshots.get(0).getUsername();
+				players.add(username);
 			}
 		}
 
-		log.info("Returning {} tracked players total", players.size());
+		log.info("Returning {} tracked players", players.size());
 		return players;
 	}
 
@@ -243,8 +299,6 @@ public class StatsDataManager
 	 */
 	public void deletePlayer(String username)
 	{
-		String key = CONFIG_KEY_PREFIX + username.toLowerCase();
-		configManager.unsetConfiguration(CONFIG_GROUP, key);
-		log.info("Deleted all data for {}", username);
+		removePlayer(username);
 	}
 }

@@ -1,161 +1,103 @@
 # Hiscores Tracker
 
-A RuneLite plugin that tracks OSRS player stats and gains over time with a complete hiscores-style display.
+A comprehensive RuneLite plugin that tracks OSRS player stats and gains over time with a complete hiscores-style display.
 
 ## Features
 
-- **Hiscores-Style Display** - Clean, familiar layout with skill icons and organized sections
-- **Multiple Accounts** - Track unlimited players simultaneously
-- **Complete Coverage** - All 24 skills, 66 bosses, clues, and activities
+### Core Functionality
+- **Hiscores-Style Display** - Clean, familiar layout matching the official OSRS hiscores
+- **Complete Coverage** - Track all 25 skills (including Sailing), 66+ bosses, clues, and activities
+- **Multiple Accounts** - Track unlimited players simultaneously with easy account switching
+- **Account Type Support** - Full support for Normal, Ironman, Hardcore Ironman, and Ultimate Ironman accounts
+
+### Time-Based Tracking
 - **Flexible Timeframes** - View gains for Today, Week, Month, or Year
-- **Historical Tracking** - Stores up to 1 year of daily snapshots
-- **Auto-Refresh** - Automatic updates every 5 minutes
+- **Historical Snapshots** - Stores up to 180 days of daily snapshots
 - **Daily Navigation** - Browse through past days to see historical gains
-- **Account Type Support** - Track Normal, Ironman, Hardcore Ironman, and Ultimate Ironman accounts
+- **Auto-Refresh** - Automatic updates every 5 minutes (configurable)
 
-## Quick Start
+### Display Features
+- **Skill Icons** - All skills display with proper sprite icons including Sailing
+- **Boss Icons** - All bosses including new Sailing-related bosses (Doom of Mokhaiotl, Shellbane Gryphon)
+- **Color-Coded Gains** - Positive gains shown in green for easy visualization
+- **Rank Tracking** - See your rank changes alongside XP/KC gains
 
-1. Install RuneLite from https://runelite.net
-2. Open RuneLite and log in
-3. Click the wrench icon (Configuration)
-4. Search for "Hiscores Tracker" in the Plugin Hub
-5. Click "Install"
-6. Look for the plugin icon in the right sidebar
-7. Click **+** to add a player
-8. Select account type and enter player name
-9. View stats and gains!
+## Installation
 
-## Configuration
+### Via RuneLite Plugin Hub (Coming Soon)
+1. Open RuneLite
+2. Click the Plugin Hub button
+3. Search for "Hiscores Tracker"
+4. Click Install
 
-Go to **RuneLite Settings > Hiscores Tracker**:
+### Manual Installation (Current)
+1. Download the latest `.jar` from the [Releases](https://github.com/RobertoChavez2433/hiscores-tracker/releases) page
+2. Place it in `~/.runelite/sideloaded-plugins/` (create the folder if it doesn't exist)
+3. Restart RuneLite
+4. Enable the plugin in the Plugin Configuration panel
 
-### Refresh Settings
-- **Enable Auto-Refresh** - Automatically update data (default: ON)
-- **Refresh Interval** - How often to refresh in minutes (default: 5)
-- **Data Retention** - Days of history to keep (default: 365)
+## Usage
 
-### Display Settings
-- **Default Timeframe** - Starting timeframe (default: "Today")
-- **Show Ranks** - Display hiscores rank (default: ON)
-- **Compact Mode** - More compact layout (default: OFF)
+1. **Add a Player**: Type a username in the search box and press Enter
+2. **Select Timeframe**: Click Today/Week/Month/Year to change the view
+3. **Navigate Days**: Use the date selector to view historical data
+4. **Switch Accounts**: Use the dropdown to switch between tracked players
+5. **Set Account Type**: Right-click an account in the dropdown to set its type (Normal/Ironman/etc.)
 
-## Development
+## Data Storage
 
-### Project Structure
-```
-src/main/java/com/advancedxptracker/
-├── AdvancedXpTrackerPlugin.java   # Main plugin class
-├── AdvancedXpTrackerConfig.java   # Configuration interface
-├── HiscoresPanel.java             # Main UI panel
-├── HiscoresClient.java            # API client for fetching data
-├── PlayerStats.java               # Data model for player snapshots
-├── PlayerGains.java               # Calculates gains between snapshots
-└── StatsDataManager.java          # Manages historical data storage
-```
+- **Configuration**: Stored via RuneLite's ConfigManager
+- **Historical Data**: Stored in `~/.runelite/hiscores-tracker-data.json`
+- **Data Retention**: Automatically cleans snapshots older than 180 days
+- **Automatic Cleanup**: Runs on plugin startup to maintain reasonable file size
 
-### Key Components
+## Technical Details
 
-**HiscoresClient** - Fetches player data from:
-```
-https://secure.runescape.com/m=hiscore_oldschool/index_lite.ws?player={name}
-```
+### Sprite IDs
+The plugin uses verified sprite IDs for all skills and bosses:
+- **Sailing Skill**: Sprite ID 228 (Anchor icon)
+- **Doom of Mokhaiotl**: Sprite ID 6347 (Red demon mask)
+- **Shellbane Gryphon**: Sprite ID 6349 (Orange/tan creature)
 
-**StatsDataManager** - Stores snapshots in RuneLite's ConfigManager as JSON
-
-**HiscoresPanel** - UI with:
-- Player selector dropdown
-- Timeframe selector (Today/Week/Month/Year)
-- Refresh button
-- Search field
-- Scrollable stats display
-
-## Troubleshooting
-
-### Plugin Not Showing in Plugin Hub
-- Make sure you have the latest RuneLite version
-- Restart RuneLite
-- Check Plugin Hub tab in the configuration panel
-
-### Stuck on "Loading..."
-1. **Restart RuneLite completely**
-2. Verify player name is spelled correctly
-3. Ensure player has hiscores data (not a brand new account)
-4. Check internet connection
-5. Wait a moment - initial fetch can take a few seconds
-
-### "Failed to fetch player data"
-- Verify username spelling (check official hiscores)
-- Player must have logged in recently to have hiscores data
-- May be rate limited - wait 30 seconds and try again
-- Check if OSRS hiscores website is accessible
+### API Compatibility
+- Built against RuneLite API version 1.12.11+
+- Compatible with OSRS updates through January 2026
+- Supports all current hiscores endpoints (Normal, Ironman, Hardcore, Ultimate, Fresh Start Worlds)
 
 ## Development
 
 ### Building from Source
 ```bash
-# Clone the repository
-git clone https://github.com/RobertoChavez2433/hiscores-tracker.git
-cd hiscores-tracker
-
-# Build the plugin
-./gradlew clean build
-
-# JAR will be in: build/libs/
+./gradlew build
 ```
 
-### Installing Custom Build
-1. Build the plugin
-2. Copy JAR from `build/libs/` to `%USERPROFILE%\.runelite\sideloaded-plugins\`
-3. Launch RuneLite with `--developer-mode`
+The compiled JAR will be in `build/libs/advanced-xp-tracker-1.0-SNAPSHOT.jar`
 
-## Technical Details
+### Testing
+See `testing-tools/README.md` for development and testing utilities.
 
-- **Language**: Java 11
-- **Build Tool**: Gradle 8.5
-- **Dependencies**: RuneLite Client API, OkHttp, GSON, Lombok
-- **Threading**: Background ExecutorService for API calls (prevents UI blocking)
-- **Storage**: RuneLite ConfigManager (JSON serialization)
-- **UI**: Swing components with RuneLite's ColorScheme
+## Known Limitations
+
+- Sailing skill and related bosses display correctly but rely on hardcoded sprite IDs until RuneLite API is updated
+- Data is stored locally only (no cloud sync between devices)
+- Requires periodic hiscores lookups (respects OSRS API rate limits)
 
 ## Contributing
 
 Found a bug or have a feature request? Please open an issue on GitHub:
 https://github.com/RobertoChavez2433/hiscores-tracker/issues
 
-## License
-
-This plugin follows RuneLite's license and guidelines.
-
-## Display Layout
-
-### Skills Section
-- Two-row layout per skill
-- First row: Skill name + level, centered icon, rank
-- Second row: Total XP, XP gains (green)
-- Hover tooltip shows: Rank, Level, XP, XP to next level, and timeframe gains
-
-### Clue Scrolls Completed
-- Two-row layout per clue type
-- First row: Clue type name, centered icon, rank
-- Second row: Completed count, gain (green)
-- Shows All, Beginner, Easy, Medium, Hard, Elite, and Master clues
-
-### Activities
-- Two-row layout per activity
-- First row: Activity name, centered icon, rank
-- Second row: Score, gain (green)
-- Includes League Points, LMS, PvP Arena, Soul Wars, Rifts Closed, Colosseum Glory, etc.
-
-### Boss Kill Count
-- Compact 3-column grid layout to save space
-- Shows boss icon + KC number + gain in parentheses
-- Hover tooltip shows: Boss name, Rank, KC, and gains
-- All 66 bosses included
+Pull requests are welcome! Please ensure your code:
+- Follows the existing code style
+- Includes appropriate comments
+- Has been tested locally
 
 ## License
 
 This plugin follows RuneLite's BSD 2-Clause License.
 
-## Author
+## Credits
 
-Created by RobertoChavez2433
+- Created by RobertoChavez2433
+- Built with the RuneLite Client API
+- Sprite verification assisted by Claude Code
