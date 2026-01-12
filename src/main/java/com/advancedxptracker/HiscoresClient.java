@@ -20,10 +20,12 @@ import java.util.concurrent.TimeUnit;
 public class HiscoresClient
 {
 	private final OkHttpClient httpClient;
+	private final Gson gson;
 
-	public HiscoresClient(OkHttpClient httpClient)
+	public HiscoresClient(OkHttpClient httpClient, Gson gson)
 	{
 		this.httpClient = httpClient;
+		this.gson = gson;
 	}
 
 	/**
@@ -72,7 +74,6 @@ public class HiscoresClient
 	{
 		log.info("PARSING hiscores JSON data for username: '{}'", username);
 
-		Gson gson = new Gson();
 		HiscoresResponse response;
 		try
 		{

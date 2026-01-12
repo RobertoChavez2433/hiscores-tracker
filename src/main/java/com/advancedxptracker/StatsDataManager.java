@@ -1,7 +1,6 @@
 package com.advancedxptracker;
 
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.config.ConfigManager;
@@ -23,17 +22,18 @@ public class StatsDataManager
 {
 	private static final String CONFIG_GROUP = "advancedxptracker";
 	private static final String ACCOUNT_TYPE_KEY_PREFIX = "accounttype_";
-	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final long MAX_SNAPSHOT_AGE = TimeUnit.DAYS.toMillis(180); // Keep 180 days
 	private static final String DATA_FILE_NAME = "hiscores-tracker-data.json";
 
 	private final ConfigManager configManager;
+	private final Gson gson;
 	private final File dataFile;
 	private Map<String, List<PlayerStats>> allPlayerData;
 
-	public StatsDataManager(ConfigManager configManager)
+	public StatsDataManager(ConfigManager configManager, Gson gson)
 	{
 		this.configManager = configManager;
+		this.gson = gson.newBuilder().setPrettyPrinting().create();
 
 		// Get RuneLite directory (~/.runelite)
 		String runelitePath = System.getProperty("user.home") + File.separator + ".runelite";
@@ -63,7 +63,7 @@ public class StatsDataManager
 		try (Reader reader = new FileReader(dataFile))
 		{
 			Type type = new TypeToken<Map<String, List<PlayerStats>>>(){}.getType();
-			allPlayerData = GSON.fromJson(reader, type);
+			allPlayerData = gson.fromJson(reader, type);
 
 			if (allPlayerData == null)
 			{
@@ -94,7 +94,7 @@ public class StatsDataManager
 
 			try (Writer writer = new FileWriter(dataFile))
 			{
-				GSON.toJson(allPlayerData, writer);
+				gson.toJson(allPlayerData, writer);
 			}
 
 			log.info("Saved data for {} players to file", allPlayerData.size());

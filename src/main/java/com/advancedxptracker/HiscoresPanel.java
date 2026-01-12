@@ -52,10 +52,10 @@ public class HiscoresPanel extends PluginPanel
 	private PlayerGains currentGains;
 	private int currentDayOffset = 0; // 0 = today, 1 = yesterday, etc.
 
-	public HiscoresPanel(OkHttpClient httpClient, StatsDataManager dataManager, ScheduledExecutorService executor, SpriteManager spriteManager)
+	public HiscoresPanel(OkHttpClient httpClient, StatsDataManager dataManager, ScheduledExecutorService executor, SpriteManager spriteManager, com.google.gson.Gson gson)
 	{
 		super(false);
-		this.hiscoresClient = new HiscoresClient(httpClient);
+		this.hiscoresClient = new HiscoresClient(httpClient, gson);
 		this.dataManager = dataManager;
 		this.executor = executor;
 		this.spriteManager = spriteManager;

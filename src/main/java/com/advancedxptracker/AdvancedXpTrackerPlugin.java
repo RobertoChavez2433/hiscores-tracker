@@ -1,5 +1,6 @@
 package com.advancedxptracker;
 
+import com.google.gson.Gson;
 import com.google.inject.Provides;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
@@ -52,6 +53,9 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	@Inject
 	private SpriteManager spriteManager;
 
+	@Inject
+	private Gson gson;
+
 	private StatsDataManager dataManager;
 	private HiscoresPanel panel;
 	private NavigationButton navButton;
@@ -70,12 +74,12 @@ public class AdvancedXpTrackerPlugin extends Plugin
 
 		// Initialize data manager
 		log.info("Initializing Stats Data Manager...");
-		dataManager = new StatsDataManager(configManager);
+		dataManager = new StatsDataManager(configManager, gson);
 		log.info("Data Manager initialized successfully");
 
 		// Create UI panel
 		log.info("Creating Hiscores Panel...");
-		panel = new HiscoresPanel(httpClient, dataManager, executor, spriteManager);
+		panel = new HiscoresPanel(httpClient, dataManager, executor, spriteManager, gson);
 		log.info("Hiscores Panel created successfully");
 
 		// Create and add navigation button
