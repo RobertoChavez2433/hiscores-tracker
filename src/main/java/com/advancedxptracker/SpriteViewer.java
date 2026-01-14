@@ -1,6 +1,7 @@
 package com.advancedxptracker;
 
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.client.RuneLite;
 import net.runelite.client.game.SpriteManager;
 
 import javax.imageio.ImageIO;
@@ -34,7 +35,7 @@ public class SpriteViewer
 			{
 				try
 				{
-					File outputDir = new File(System.getProperty("user.home"), "Documents/Runescape/Plugins/sprite-verification");
+					File outputDir = new File(RuneLite.RUNELITE_DIR, "sprite-debug");
 					outputDir.mkdirs();
 
 					File outputFile = new File(outputDir, filename);

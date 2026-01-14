@@ -3,6 +3,7 @@ package com.advancedxptracker;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.client.RuneLite;
 import net.runelite.client.config.ConfigManager;
 
 import java.io.*;
@@ -35,9 +36,8 @@ public class StatsDataManager
 		this.configManager = configManager;
 		this.gson = gson.newBuilder().setPrettyPrinting().create();
 
-		// Get RuneLite directory (~/.runelite)
-		String runelitePath = System.getProperty("user.home") + File.separator + ".runelite";
-		this.dataFile = new File(runelitePath, DATA_FILE_NAME);
+		// Use RuneLite's official directory constant
+		this.dataFile = new File(RuneLite.RUNELITE_DIR, DATA_FILE_NAME);
 
 		// Load all data from file
 		loadAllData();

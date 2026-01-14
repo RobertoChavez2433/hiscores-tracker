@@ -34,7 +34,6 @@ public class HiscoresPanel extends PluginPanel
 	private final StatsDataManager dataManager;
 	private final ScheduledExecutorService executor;
 	private final SpriteManager spriteManager;
-	private final java.io.PrintWriter debugLog;
 
 	// UI Components
 	private JComboBox<String> playerSelector;
@@ -59,23 +58,6 @@ public class HiscoresPanel extends PluginPanel
 		this.dataManager = dataManager;
 		this.executor = executor;
 		this.spriteManager = spriteManager;
-
-		// Initialize debug log
-		java.io.PrintWriter tempLog = null;
-		try {
-			String userHome = System.getProperty("user.home");
-			String logPath = userHome + "\\Documents\\Runescape\\Plugins\\advanced-xp-tracker-v2\\testing-tools\\hiscores-panel-debug.log";
-			java.io.File logFile = new java.io.File(logPath);
-			logFile.getParentFile().mkdirs();
-			tempLog = new java.io.PrintWriter(new java.io.FileWriter(logFile, false)); // false = overwrite
-			tempLog.println("=".repeat(80));
-			tempLog.println("HISCORES PANEL DEBUG LOG - " + new java.util.Date());
-			tempLog.println("=".repeat(80));
-			tempLog.flush();
-		} catch (Exception e) {
-			log.error("Failed to create debug log", e);
-		}
-		this.debugLog = tempLog;
 
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -127,31 +109,13 @@ public class HiscoresPanel extends PluginPanel
 		refreshPlayerList();
 
 		// Initial load - show blank stats, don't auto-load player
-		log.info("========== CALLING displayBlankStats() on initialization ==========");
-		if (debugLog != null) {
-			debugLog.println("INITIALIZATION: About to call displayBlankStats()");
-			debugLog.println("Player selector item count: " + playerSelector.getItemCount());
-			debugLog.println("Player selector selected index: " + playerSelector.getSelectedIndex());
-			debugLog.println("Player selector selected item: " + playerSelector.getSelectedItem());
-			debugLog.flush();
-		}
+		log.debug("Calling displayBlankStats() on initialization");
 		displayBlankStats();
-		log.info("========== displayBlankStats() completed ==========");
-		if (debugLog != null) {
-			debugLog.println("INITIALIZATION: displayBlankStats() completed");
-			debugLog.println("Content panel component count: " + contentPanel.getComponentCount());
-			debugLog.flush();
-		}
+		log.debug("displayBlankStats() completed");
 
 		// Add action listener AFTER initial setup to avoid triggering during initialization
 		playerSelector.addActionListener(e -> {
-			log.info("Player selector action triggered, selected: {}", playerSelector.getSelectedItem());
-			if (debugLog != null) {
-				debugLog.println("\nACTION LISTENER: Player selector changed");
-				debugLog.println("Selected item: " + playerSelector.getSelectedItem());
-				debugLog.println("Selected index: " + playerSelector.getSelectedIndex());
-				debugLog.flush();
-			}
+			log.debug("Player selector changed to: {}", playerSelector.getSelectedItem());
 			loadPlayerData();
 		});
 	}
@@ -1110,15 +1074,7 @@ public class HiscoresPanel extends PluginPanel
 	 */
 	private void displayBlankStats()
 	{
-		log.info("displayBlankStats() - START");
-		if (debugLog != null) {
-			debugLog.println("\ndisplayBlankStats() - CALLED");
-			debugLog.println("Stack trace:");
-			for (StackTraceElement ste : Thread.currentThread().getStackTrace()) {
-				debugLog.println("  " + ste);
-			}
-			debugLog.flush();
-		}
+		log.debug("displayBlankStats() - START");
 		contentPanel.removeAll();
 		log.info("displayBlankStats() - Content panel cleared");
 
@@ -1502,16 +1458,7 @@ public class HiscoresPanel extends PluginPanel
 
 	private void showWelcomeMessage()
 	{
-		log.warn("========== showWelcomeMessage() CALLED - THIS SHOULD NOT HAPPEN ON BLANK STATE ==========");
-		log.warn("Stack trace:", new Exception("Welcome message call trace"));
-		if (debugLog != null) {
-			debugLog.println("\n!!! WARNING: showWelcomeMessage() WAS CALLED !!!");
-			debugLog.println("This method should NOT be called! Stack trace:");
-			for (StackTraceElement ste : Thread.currentThread().getStackTrace()) {
-				debugLog.println("  " + ste);
-			}
-			debugLog.flush();
-		}
+		log.debug("showWelcomeMessage() called");
 		JLabel welcomeLabel = new JLabel("<html><center>Welcome!<br><br>Click '+' to add a player to track</center></html>");
 		welcomeLabel.setForeground(Color.WHITE);
 		welcomeLabel.setHorizontalAlignment(SwingConstants.CENTER);
