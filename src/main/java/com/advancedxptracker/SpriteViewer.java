@@ -27,7 +27,7 @@ public class SpriteViewer
 	 */
 	public void saveSpriteImage(int spriteId, String filename)
 	{
-		log.info("Attempting to load sprite ID: {}", spriteId);
+		log.debug("Attempting to load sprite ID: {}", spriteId);
 
 		spriteManager.getSpriteAsync(spriteId, 0, (sprite) ->
 		{
@@ -41,8 +41,8 @@ public class SpriteViewer
 					File outputFile = new File(outputDir, filename);
 					ImageIO.write(sprite, "PNG", outputFile);
 
-					log.info("Sprite {} saved to: {}", spriteId, outputFile.getAbsolutePath());
-					log.info("Sprite dimensions: {}x{}", sprite.getWidth(), sprite.getHeight());
+					log.debug("Sprite {} saved to: {}", spriteId, outputFile.getAbsolutePath());
+					log.debug("Sprite dimensions: {}x{}", sprite.getWidth(), sprite.getHeight());
 				}
 				catch (IOException e)
 				{
@@ -61,17 +61,13 @@ public class SpriteViewer
 	 */
 	public void saveTestSprites(int sailingId, int doomId, int shellbaneId)
 	{
-		log.info("=== SPRITE VERIFICATION START ===");
-		log.info("Testing sprite IDs:");
-		log.info("  Sailing: {}", sailingId);
-		log.info("  Doom of Mokhaiotl: {}", doomId);
-		log.info("  Shellbane Gryphon: {}", shellbaneId);
+		log.debug("Sprite verification start, testing IDs: sailing={}, doom={}, shellbane={}", sailingId, doomId, shellbaneId);
 
 		saveSpriteImage(sailingId, String.format("sailing_%d.png", sailingId));
 		saveSpriteImage(doomId, String.format("doom_%d.png", doomId));
 		saveSpriteImage(shellbaneId, String.format("shellbane_%d.png", shellbaneId));
 
-		log.info("=== SPRITE VERIFICATION END ===");
+		log.debug("Sprite verification end");
 	}
 
 	/**
@@ -79,7 +75,7 @@ public class SpriteViewer
 	 */
 	public void testSpriteRange(int startId, int endId, String prefix)
 	{
-		log.info("Testing sprite range {}-{} with prefix '{}'", startId, endId, prefix);
+		log.debug("Testing sprite range {}-{} with prefix '{}'", startId, endId, prefix);
 
 		for (int i = startId; i <= endId; i++)
 		{

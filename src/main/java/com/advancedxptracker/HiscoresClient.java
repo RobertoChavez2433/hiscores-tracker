@@ -7,11 +7,9 @@ import okhttp3.Request;
 import okhttp3.Response;
 
 import java.io.IOException;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Client for fetching player data from OSRS Hiscores API
@@ -19,6 +17,8 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class HiscoresClient
 {
+	private static final Map<String, String> NAME_TO_KEY_MAP = createNameToKeyMapping();
+
 	private final OkHttpClient httpClient;
 	private final Gson gson;
 
@@ -36,12 +36,10 @@ public class HiscoresClient
 	 */
 	public PlayerStats fetchPlayerStats(String username, AccountType accountType) throws IOException
 	{
-		log.info("========================================");
-		log.info("FETCHING HISCORES FOR: '{}' (Account Type: {})", username, accountType.getDisplayName());
-		log.info("========================================");
+		log.debug("Fetching hiscores for '{}' ({})", username, accountType.getDisplayName());
 
 		String url = accountType.getApiUrl() + username.replace(" ", "+");
-		log.info("API URL: {}", url);
+		log.debug("API URL: {}", url);
 
 		Request request = new Request.Builder()
 			.url(url)
@@ -56,13 +54,10 @@ public class HiscoresClient
 			}
 
 			String body = response.body().string();
-			log.info("API response received. Body length: {} characters", body.length());
-			log.info("First 150 chars of response: {}", body.substring(0, Math.min(150, body.length())));
+			log.debug("API response received, body length: {} characters", body.length());
 
 			PlayerStats result = parseHiscoresJson(username, body);
-			log.info("========================================");
-			log.info("FINISHED FETCHING FOR: '{}'", username);
-			log.info("========================================");
+			log.debug("Finished fetching for '{}'", username);
 			return result;
 		}
 	}
@@ -72,7 +67,7 @@ public class HiscoresClient
 	 */
 	private PlayerStats parseHiscoresJson(String username, String jsonData)
 	{
-		log.info("PARSING hiscores JSON data for username: '{}'", username);
+		log.debug("Parsing hiscores JSON data for username: '{}'", username);
 
 		HiscoresResponse response;
 		try
@@ -92,14 +87,13 @@ public class HiscoresClient
 		}
 
 		PlayerStats stats = new PlayerStats(username, System.currentTimeMillis());
-		Map<String, String> nameToKeyMap = createNameToKeyMapping();
 
 		// Parse skills from JSON
-		log.info("Parsing {} skills from JSON...", response.skills.length);
+		log.debug("Parsing {} skills from JSON", response.skills.length);
 		int skillsParsed = 0;
 		for (HiscoresResponse.SkillEntry skill : response.skills)
 		{
-			String key = nameToKeyMap.get(skill.name);
+			String key = NAME_TO_KEY_MAP.get(skill.name);
 			if (key != null)
 			{
 				stats.setSkill(key, skill.rank, skill.level, skill.xp);
@@ -111,16 +105,16 @@ public class HiscoresClient
 				log.debug("Unknown skill in hiscore: {}", skill.name);
 			}
 		}
-		log.info("Parsed {} skills", skillsParsed);
+		log.debug("Parsed {} skills", skillsParsed);
 
 		// Parse activities and bosses from JSON using name-based mapping
-		log.info("Parsing {} activities/bosses from JSON...", response.activities.length);
+		log.debug("Parsing {} activities/bosses from JSON", response.activities.length);
 		int activitiesParsed = 0;
 		int activitiesWithScores = 0;
 
 		for (HiscoresResponse.ActivityEntry activity : response.activities)
 		{
-			String key = nameToKeyMap.get(activity.name);
+			String key = NAME_TO_KEY_MAP.get(activity.name);
 			if (key != null)
 			{
 				stats.setActivity(key, activity.rank, (int) activity.score);
@@ -129,7 +123,7 @@ public class HiscoresClient
 				if (activity.score > 0)
 				{
 					activitiesWithScores++;
-					log.info("  Activity '{}' → '{}': rank={}, score={} ✅", activity.name, key, activity.rank, activity.score);
+					log.debug("Activity '{}' -> '{}': rank={}, score={}", activity.name, key, activity.rank, activity.score);
 				}
 			}
 			else
@@ -138,8 +132,8 @@ public class HiscoresClient
 			}
 		}
 
-		log.info("Parsed {} activities/bosses total, {} have non-zero scores", activitiesParsed, activitiesWithScores);
-		log.info("Successfully parsed hiscores for '{}'", username);
+		log.debug("Parsed {} activities/bosses total, {} have non-zero scores", activitiesParsed, activitiesWithScores);
+		log.debug("Successfully parsed hiscores for '{}'", username);
 		return stats;
 	}
 
@@ -147,7 +141,7 @@ public class HiscoresClient
 	 * Create mapping from OSRS API names to internal keys
 	 * Names must match EXACTLY as returned by the JSON API (case-sensitive, including spaces and apostrophes)
 	 */
-	private Map<String, String> createNameToKeyMapping()
+	private static Map<String, String> createNameToKeyMapping()
 	{
 		Map<String, String> map = new HashMap<>();
 
@@ -270,6 +264,6 @@ public class HiscoresClient
 		map.put("Zalcano", "zalcano");
 		map.put("Zulrah", "zulrah");
 
-		return map;
+		return Collections.unmodifiableMap(map);
 	}
 }

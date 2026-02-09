@@ -45,7 +45,7 @@ public class StatsDataManager
 		// Clean up old snapshots on startup
 		cleanupOldSnapshots();
 
-		log.info("StatsDataManager initialized with data file: {}", dataFile.getAbsolutePath());
+		log.debug("StatsDataManager initialized with data file: {}", dataFile.getAbsolutePath());
 	}
 
 	/**
@@ -55,7 +55,7 @@ public class StatsDataManager
 	{
 		if (!dataFile.exists())
 		{
-			log.info("Data file doesn't exist yet, starting fresh");
+			log.debug("Data file doesn't exist yet, starting fresh");
 			allPlayerData = new HashMap<>();
 			return;
 		}
@@ -70,7 +70,7 @@ public class StatsDataManager
 				allPlayerData = new HashMap<>();
 			}
 
-			log.info("Loaded data for {} players from file", allPlayerData.size());
+			log.debug("Loaded data for {} players from file", allPlayerData.size());
 		}
 		catch (Exception e)
 		{
@@ -97,7 +97,7 @@ public class StatsDataManager
 				gson.toJson(allPlayerData, writer);
 			}
 
-			log.info("Saved data for {} players to file", allPlayerData.size());
+			log.debug("Saved data for {} players to file", allPlayerData.size());
 		}
 		catch (Exception e)
 		{
@@ -123,14 +123,14 @@ public class StatsDataManager
 			if (removed > 0)
 			{
 				totalRemoved += removed;
-				log.info("Removed {} old snapshots for player '{}'", removed, entry.getKey());
+				log.debug("Removed {} old snapshots for player '{}'", removed, entry.getKey());
 			}
 		}
 
 		if (totalRemoved > 0)
 		{
 			saveAllData();
-			log.info("Cleanup complete: removed {} total old snapshots", totalRemoved);
+			log.debug("Cleanup complete: removed {} total old snapshots", totalRemoved);
 		}
 	}
 
@@ -141,7 +141,7 @@ public class StatsDataManager
 	{
 		String key = ACCOUNT_TYPE_KEY_PREFIX + username.toLowerCase();
 		configManager.setConfiguration(CONFIG_GROUP, key, accountType.name());
-		log.info("Saved account type '{}' for player '{}'", accountType.getDisplayName(), username);
+		log.debug("Saved account type '{}' for player '{}'", accountType.getDisplayName(), username);
 	}
 
 	/**
@@ -173,14 +173,14 @@ public class StatsDataManager
 	 */
 	public void saveSnapshot(PlayerStats stats)
 	{
-		log.info("Saving snapshot for username: '{}'", stats.getUsername());
+		log.debug("Saving snapshot for username: '{}'", stats.getUsername());
 
 		String key = stats.getUsername().toLowerCase();
 		List<PlayerStats> snapshots = allPlayerData.computeIfAbsent(key, k -> new ArrayList<>());
 
 		// Add new snapshot
 		snapshots.add(stats);
-		log.info("Added new snapshot. Total snapshots: {}", snapshots.size());
+		log.debug("Added new snapshot, total snapshots: {}", snapshots.size());
 
 		// Remove old snapshots (older than 180 days)
 		long cutoffTime = System.currentTimeMillis() - MAX_SNAPSHOT_AGE;
@@ -190,12 +190,12 @@ public class StatsDataManager
 
 		if (removed > 0)
 		{
-			log.info("Removed {} old snapshots", removed);
+			log.debug("Removed {} old snapshots", removed);
 		}
 
 		// Save to file
 		saveAllData();
-		log.info("✅ Saved snapshot for '{}' ({} total snapshots)", stats.getUsername(), snapshots.size());
+		log.debug("Saved snapshot for '{}' ({} total snapshots)", stats.getUsername(), snapshots.size());
 	}
 
 	/**
@@ -257,7 +257,7 @@ public class StatsDataManager
 	 */
 	public void removePlayer(String username)
 	{
-		log.info("Removing player: '{}'", username);
+		log.debug("Removing player: '{}'", username);
 
 		String key = username.toLowerCase();
 		String typeKey = ACCOUNT_TYPE_KEY_PREFIX + username.toLowerCase();
@@ -269,7 +269,7 @@ public class StatsDataManager
 		// Remove account type from config
 		configManager.unsetConfiguration(CONFIG_GROUP, typeKey);
 
-		log.info("✅ Removed player '{}' and all associated data", username);
+		log.debug("Removed player '{}' and all associated data", username);
 	}
 
 	/**
@@ -290,7 +290,7 @@ public class StatsDataManager
 			}
 		}
 
-		log.info("Returning {} tracked players", players.size());
+		log.debug("Returning {} tracked players", players.size());
 		return players;
 	}
 

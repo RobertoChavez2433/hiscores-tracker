@@ -227,18 +227,18 @@ public class HiscoresPanel extends PluginPanel
 
 	private void refreshPlayerList()
 	{
-		log.info("Refreshing player list...");
+		log.debug("Refreshing player list");
 		playerSelector.removeAllItems();
 		List<String> players = dataManager.getTrackedPlayers();
-		log.info("Found {} tracked players", players.size());
+		log.debug("Found {} tracked players", players.size());
 		for (String player : players)
 		{
-			log.info("Adding player to selector: {}", player);
+			log.debug("Adding player to selector: {}", player);
 			playerSelector.addItem(player);
 		}
 		// Deselect any auto-selected item to prevent auto-loading
 		playerSelector.setSelectedIndex(-1);
-		log.info("Player list refresh complete. Selector now has {} items", playerSelector.getItemCount());
+		log.debug("Player list refresh complete, selector has {} items", playerSelector.getItemCount());
 	}
 
 	private void addPlayer()
@@ -269,7 +269,7 @@ public class HiscoresPanel extends PluginPanel
 		}
 
 		final AccountType finalAccountType = selectedType;
-		log.info("Adding player '{}' with account type '{}'", finalUsername, finalAccountType.getDisplayName());
+		log.debug("Adding player '{}' with account type '{}'", finalUsername, finalAccountType.getDisplayName());
 
 		// Show loading state
 		contentPanel.removeAll();
@@ -281,21 +281,18 @@ public class HiscoresPanel extends PluginPanel
 		executor.submit(() -> {
 			try
 			{
-				log.info("Fetching hiscores for new player: {} ({})", finalUsername, finalAccountType.getDisplayName());
+				log.debug("Fetching hiscores for new player: {} ({})", finalUsername, finalAccountType.getDisplayName());
 				PlayerStats stats = hiscoresClient.fetchPlayerStats(finalUsername, finalAccountType);
 				dataManager.saveSnapshot(stats);
 				dataManager.saveAccountType(finalUsername, finalAccountType);
-				log.info("Successfully saved snapshot for: {}", finalUsername);
+				log.debug("Successfully saved snapshot for: {}", finalUsername);
 
 				// Update UI on Swing thread
 				SwingUtilities.invokeLater(() -> {
-					log.info("UI callback executing for player: {}", finalUsername);
+					log.debug("UI callback executing for player: {}", finalUsername);
 					refreshPlayerList();
-					log.info("Setting selected item to: {}", finalUsername);
 					playerSelector.setSelectedItem(finalUsername);
-					Object selected = playerSelector.getSelectedItem();
-					log.info("Selected item is now: {}", selected);
-					log.info("Calling loadPlayerData()...");
+					log.debug("Selected item is now: {}", playerSelector.getSelectedItem());
 					loadPlayerData();
 				});
 			}
@@ -335,7 +332,7 @@ public class HiscoresPanel extends PluginPanel
 
 		if (confirm == JOptionPane.YES_OPTION)
 		{
-			log.info("Removing player: {}", selectedPlayer);
+			log.debug("Removing player: {}", selectedPlayer);
 			dataManager.removePlayer(selectedPlayer);
 			refreshPlayerList();
 
@@ -370,24 +367,24 @@ public class HiscoresPanel extends PluginPanel
 		executor.submit(() -> {
 			try
 			{
-				log.info("Loading player data for: {}", selectedPlayer);
+				log.debug("Loading player data for: {}", selectedPlayer);
 
 				// Load account type
 				AccountType accountType = dataManager.loadAccountType(selectedPlayer);
-				log.info("Using account type '{}' for player '{}'", accountType.getDisplayName(), selectedPlayer);
+				log.debug("Using account type '{}' for player '{}'", accountType.getDisplayName(), selectedPlayer);
 
 				// Try to fetch latest data
 				PlayerStats stats = hiscoresClient.fetchPlayerStats(selectedPlayer, accountType);
 				dataManager.saveSnapshot(stats);
 				currentStats = stats;
-				log.info("Successfully fetched and saved data for: {}", selectedPlayer);
+				log.debug("Successfully fetched and saved data for: {}", selectedPlayer);
 
 				// Calculate gains
 				String timeframe = (String) timeframeSelector.getSelectedItem();
 				int days = getTimeframeDays(timeframe);
 				PlayerStats olderStats = dataManager.getSnapshotFromDaysAgo(currentStats.getUsername(), days);
 				currentGains = currentStats.calculateGains(olderStats);
-				log.info("Calculated gains for timeframe: {}", timeframe);
+				log.debug("Calculated gains for timeframe: {}", timeframe);
 
 				SwingUtilities.invokeLater(this::displayStats);
 			}
@@ -504,39 +501,6 @@ public class HiscoresPanel extends PluginPanel
 			displayBlankStats();
 			return;
 		}
-
-		// Log panel dimensions for debugging
-		SwingUtilities.invokeLater(() -> {
-			int panelWidth = contentPanel.getWidth();
-			int availableWidth = panelWidth - 10; // Account for borders
-			log.info("===== PANEL MEASUREMENTS =====");
-			log.info("Content panel width: {} px", panelWidth);
-			log.info("Available width (minus borders): {} px", availableWidth);
-
-			// Calculate space needed for each component
-			Font nameFont = new Font(Font.SANS_SERIF, Font.BOLD, 12);
-			Font numberFont = new Font("Monospaced", Font.PLAIN, 12);
-			FontMetrics nameFm = getFontMetrics(nameFont);
-			FontMetrics numberFm = getFontMetrics(numberFont);
-
-			// Measure longest skill name
-			int longestNameWidth = nameFm.stringWidth("Construction");
-			log.info("Longest name width (Construction): {} px", longestNameWidth);
-
-			// Measure number widths
-			int levelWidth = numberFm.stringWidth("99");
-			int xpWidth = numberFm.stringWidth("200,000,000");
-			int gainWidth = numberFm.stringWidth("(+1,000,000)");
-
-			log.info("Level '99' width: {} px", levelWidth);
-			log.info("XP '200,000,000' width: {} px", xpWidth);
-			log.info("Gain '(+1,000,000)' width: {} px", gainWidth);
-
-			int totalNeeded = longestNameWidth + levelWidth + xpWidth + gainWidth + 30; // +30 for spacing
-			log.info("Total width needed: {} px", totalNeeded);
-			log.info("Fits in one line: {}", totalNeeded <= availableWidth);
-			log.info("============================");
-		});
 
 		// Add skills section
 		addSection("Skills", createSkillsPanel());
@@ -1074,29 +1038,23 @@ public class HiscoresPanel extends PluginPanel
 	 */
 	private void displayBlankStats()
 	{
-		log.debug("displayBlankStats() - START");
+		log.debug("displayBlankStats()");
 		contentPanel.removeAll();
-		log.info("displayBlankStats() - Content panel cleared");
 
 		// Add skills section with default values
 		addSection("Skills", createBlankSkillsPanel());
-		log.info("displayBlankStats() - Added Skills section");
 
 		// Add clues section with default values
 		addSection("Clue Scrolls Completed", createBlankCluesPanel());
-		log.info("displayBlankStats() - Added Clues section");
 
 		// Add activities section with default values
 		addSection("Activities", createBlankActivitiesPanel());
-		log.info("displayBlankStats() - Added Activities section");
 
 		// Add bosses section with default values
 		addSection("Boss Kill Count", createBlankBossesPanel());
-		log.info("displayBlankStats() - Added Bosses section");
 
 		contentPanel.revalidate();
 		contentPanel.repaint();
-		log.info("displayBlankStats() - Revalidated and repainted. Component count: {}", contentPanel.getComponentCount());
 	}
 
 	private JPanel createBlankSkillsPanel()
@@ -1655,13 +1613,13 @@ public class HiscoresPanel extends PluginPanel
 	 */
 	public void onClientStatsUpdated(String username)
 	{
-		log.info("Client stats updated for: '{}'", username);
+		log.debug("Client stats updated for: '{}'", username);
 
 		// If this player is currently selected, reload their data
 		String selectedPlayer = (String) playerSelector.getSelectedItem();
 		if (selectedPlayer != null && selectedPlayer.equals(username))
 		{
-			log.info("Refreshing display for currently selected player '{}'", username);
+			log.debug("Refreshing display for currently selected player '{}'", username);
 			SwingUtilities.invokeLater(() -> {
 				// Reload data from saved snapshots (which now includes client data)
 				List<PlayerStats> snapshots = dataManager.loadSnapshots(username);

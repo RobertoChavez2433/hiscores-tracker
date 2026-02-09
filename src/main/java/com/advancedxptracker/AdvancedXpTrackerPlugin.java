@@ -8,6 +8,7 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Skill;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.StatChanged;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -61,118 +62,108 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	private NavigationButton navButton;
 	private ScheduledExecutorService executor;
 	private String loggedInUsername = null;
+	private int initializeTracker = 0;
+	private long lastAccountHash = -1L;
 
 	@Override
 	protected void startUp() throws Exception
 	{
-		log.info("==========================================");
-		log.info("Hiscores Tracker STARTING UP!");
-		log.info("==========================================");
+		log.info("Hiscores Tracker starting up");
 
 		// Create executor for background tasks
 		executor = Executors.newScheduledThreadPool(2);
 
 		// Initialize data manager
-		log.info("Initializing Stats Data Manager...");
+		log.debug("Initializing Stats Data Manager");
 		dataManager = new StatsDataManager(configManager, gson);
-		log.info("Data Manager initialized successfully");
+		log.debug("Data Manager initialized");
 
 		// Create UI panel
-		log.info("Creating Hiscores Panel...");
+		log.debug("Creating Hiscores Panel");
 		panel = new HiscoresPanel(httpClient, dataManager, executor, spriteManager, gson);
-		log.info("Hiscores Panel created successfully");
+		log.debug("Hiscores Panel created");
 
 		// Create and add navigation button
-		BufferedImage icon = null;
-		try
-		{
-			log.info("Attempting to load icon from /icon.png...");
-			icon = ImageUtil.loadImageResource(getClass(), "/icon.png");
-			if (icon != null)
-			{
-				log.info("✅ Icon loaded successfully! Size: " + icon.getWidth() + "x" + icon.getHeight());
-			}
-			else
-			{
-				log.warn("⚠️ Icon loaded but is null!");
-			}
-		}
-		catch (Exception e)
-		{
-			log.error("❌ Could not load icon!", e);
-		}
+		final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/icon.png");
 
-		log.info("Building navigation button...");
+		log.debug("Building navigation button");
 		navButton = NavigationButton.builder()
 			.tooltip("Hiscores Tracker")
 			.icon(icon)
 			.priority(5)
 			.panel(panel)
 			.build();
-		log.info("Navigation button built successfully");
 
-		log.info("Adding navigation button to toolbar...");
 		clientToolbar.addNavigation(navButton);
-		log.info("✅ Navigation button added to toolbar!");
-
-		log.info("==========================================");
-		log.info("Hiscores Tracker STARTUP COMPLETE!");
-		log.info("==========================================");
+		log.debug("Navigation button added to toolbar");
 	}
 
 	@Override
 	protected void shutDown() throws Exception
 	{
-		log.info("Hiscores Tracker shutting down!");
+		log.info("Hiscores Tracker shutting down");
 
-		// Shutdown executor
-		if (executor != null)
-		{
-			executor.shutdown();
-		}
-
-		// Remove UI
-		if (navButton != null)
-		{
-			clientToolbar.removeNavigation(navButton);
-		}
-
-		log.info("Hiscores Tracker stopped!");
+		executor.shutdown();
+		clientToolbar.removeNavigation(navButton);
 	}
 
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
-		if (event.getGameState() == GameState.LOGGED_IN)
-		{
-			// Player just logged in
-			String username = client.getLocalPlayer().getName();
-			loggedInUsername = username;
-			log.info("========================================");
-			log.info("PLAYER LOGGED IN: '{}'", username);
-			log.info("========================================");
+		GameState state = event.getGameState();
 
-			// Capture initial stats snapshot
-			captureClientStats();
+		if (state == GameState.LOGGED_IN)
+		{
+			// LOGGED_IN fires on region changes too, not just actual login.
+			// Only capture stats if the account actually changed.
+			long currentAccountHash = client.getAccountHash();
+			if (currentAccountHash != lastAccountHash)
+			{
+				lastAccountHash = currentAccountHash;
+				String username = client.getLocalPlayer().getName();
+				loggedInUsername = username;
+				log.debug("Player logged in: '{}'", username);
+				captureClientStats();
+			}
 		}
-		else if (event.getGameState() == GameState.LOGIN_SCREEN)
+		else if (state == GameState.LOGGING_IN || state == GameState.HOPPING)
+		{
+			// Set initialization guard -- skip StatChanged events for 2 game ticks
+			// to avoid processing the login sync burst
+			initializeTracker = 2;
+		}
+		else if (state == GameState.LOGIN_SCREEN)
 		{
 			if (loggedInUsername != null)
 			{
-				log.info("Player '{}' logged out", loggedInUsername);
+				log.debug("Player '{}' logged out", loggedInUsername);
 				loggedInUsername = null;
+				lastAccountHash = -1L;
 			}
+		}
+	}
+
+	@Subscribe
+	public void onGameTick(GameTick gameTick)
+	{
+		if (initializeTracker > 0)
+		{
+			initializeTracker--;
 		}
 	}
 
 	@Subscribe
 	public void onStatChanged(StatChanged statChanged)
 	{
-		// When player gains XP, capture a snapshot
+		if (initializeTracker > 0)
+		{
+			// Skip stat changes during login synchronization
+			return;
+		}
+
 		if (loggedInUsername != null && client.getGameState() == GameState.LOGGED_IN)
 		{
 			log.debug("Stat changed for '{}': {}", loggedInUsername, statChanged.getSkill());
-			// Capture snapshot after XP gain (debounced to avoid spam)
 			captureClientStats();
 		}
 	}
@@ -184,7 +175,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			return;
 		}
 
-		log.info("Capturing client stats for logged-in player: '{}'", loggedInUsername);
+		log.debug("Capturing client stats for logged-in player: '{}'", loggedInUsername);
 
 		try
 		{
@@ -220,13 +211,10 @@ public class AdvancedXpTrackerPlugin extends Plugin
 
 			// Save the snapshot
 			dataManager.saveSnapshot(stats);
-			log.info("✅ Saved client snapshot for '{}'", loggedInUsername);
+			log.debug("Saved client snapshot for '{}'", loggedInUsername);
 
 			// Notify panel to refresh if this player is selected
-			if (panel != null)
-			{
-				panel.onClientStatsUpdated(loggedInUsername);
-			}
+			panel.onClientStatsUpdated(loggedInUsername);
 		}
 		catch (Exception e)
 		{
