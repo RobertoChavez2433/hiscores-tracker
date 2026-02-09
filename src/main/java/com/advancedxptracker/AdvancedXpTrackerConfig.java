@@ -25,6 +25,13 @@ public interface AdvancedXpTrackerConfig extends Config
 	)
 	String displaySection = "display";
 
+	@ConfigSection(
+		name = "Developer",
+		description = "Options for testing and debugging (no effect in normal use)",
+		position = 3
+	)
+	String developerSection = "developer";
+
 	// ===== REFRESH SETTINGS =====
 
 	@ConfigItem(
@@ -75,5 +82,19 @@ public interface AdvancedXpTrackerConfig extends Config
 	default String defaultTimeframe()
 	{
 		return "Today";
+	}
+
+	// ===== DEVELOPER (testing / debugging) =====
+
+	@ConfigItem(
+		keyName = "verboseDebugLogging",
+		name = "Verbose debug logging",
+		description = "When enabled, log extra detail at DEBUG: every game state change, login sync guard, and snapshot source. Use with Run Task 'Run RuneLite with plugin' (--debug) and filter terminal for 'Hiscores' or 'advancedxptracker'.",
+		position = 1,
+		section = developerSection
+	)
+	default boolean verboseDebugLogging()
+	{
+		return false;
 	}
 }

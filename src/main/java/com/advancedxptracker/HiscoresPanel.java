@@ -207,6 +207,7 @@ public class HiscoresPanel extends PluginPanel
 		// Update timeframe selector listener to show/hide daily navigation
 		timeframeSelector.addActionListener(e -> {
 			String selected = (String) timeframeSelector.getSelectedItem();
+			log.debug("Timeframe changed to: {}", selected);
 			dailyNavRow.setVisible("Today".equals(selected));
 			if ("Today".equals(selected)) {
 				currentDayOffset = 0;
@@ -283,7 +284,7 @@ public class HiscoresPanel extends PluginPanel
 			{
 				log.debug("Fetching hiscores for new player: {} ({})", finalUsername, finalAccountType.getDisplayName());
 				PlayerStats stats = hiscoresClient.fetchPlayerStats(finalUsername, finalAccountType);
-				dataManager.saveSnapshot(stats);
+				dataManager.saveSnapshot(stats, "hiscores_api");
 				dataManager.saveAccountType(finalUsername, finalAccountType);
 				log.debug("Successfully saved snapshot for: {}", finalUsername);
 
@@ -375,7 +376,7 @@ public class HiscoresPanel extends PluginPanel
 
 				// Try to fetch latest data
 				PlayerStats stats = hiscoresClient.fetchPlayerStats(selectedPlayer, accountType);
-				dataManager.saveSnapshot(stats);
+				dataManager.saveSnapshot(stats, "hiscores_api");
 				currentStats = stats;
 				log.debug("Successfully fetched and saved data for: {}", selectedPlayer);
 

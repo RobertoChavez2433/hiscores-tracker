@@ -65,6 +65,14 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	private int initializeTracker = 0;
 	private long lastAccountHash = -1L;
 
+	private void verboseDebug(String format, Object... args)
+	{
+		if (config.verboseDebugLogging())
+		{
+			log.debug(format, args);
+		}
+	}
+
 	@Override
 	protected void startUp() throws Exception
 	{
@@ -103,14 +111,21 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	{
 		log.info("Hiscores Tracker shutting down");
 
-		executor.shutdown();
-		clientToolbar.removeNavigation(navButton);
+		if (executor != null)
+		{
+			executor.shutdown();
+		}
+		if (navButton != null)
+		{
+			clientToolbar.removeNavigation(navButton);
+		}
 	}
 
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
 		GameState state = event.getGameState();
+		verboseDebug("[GameState] {} (RuneLite/game lifecycle)", state.name());
 
 		if (state == GameState.LOGGED_IN)
 		{
@@ -123,6 +138,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 				String username = client.getLocalPlayer().getName();
 				loggedInUsername = username;
 				log.debug("Player logged in: '{}'", username);
+				verboseDebug("[GameState] LOGGED_IN → capturing client stats (account changed)");
 				captureClientStats();
 			}
 		}
@@ -131,12 +147,14 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			// Set initialization guard -- skip StatChanged events for 2 game ticks
 			// to avoid processing the login sync burst
 			initializeTracker = 2;
+			verboseDebug("[GameState] {} → set init guard (2 ticks, skip StatChanged)", state.name());
 		}
 		else if (state == GameState.LOGIN_SCREEN)
 		{
 			if (loggedInUsername != null)
 			{
 				log.debug("Player '{}' logged out", loggedInUsername);
+				verboseDebug("[GameState] LOGIN_SCREEN → cleared logged-in user");
 				loggedInUsername = null;
 				lastAccountHash = -1L;
 			}
@@ -148,7 +166,12 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	{
 		if (initializeTracker > 0)
 		{
+			int before = initializeTracker;
 			initializeTracker--;
+			if (before > 0)
+			{
+				verboseDebug("[InitGuard] ticks left={} (StatChanged will be {} accepted)", initializeTracker, initializeTracker == 0 ? "now" : "ignored until 0");
+			}
 		}
 	}
 
@@ -157,7 +180,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	{
 		if (initializeTracker > 0)
 		{
-			// Skip stat changes during login synchronization
+			verboseDebug("[StatChanged] skipped (login sync guard, ticks left={}), skill={}", initializeTracker, statChanged.getSkill());
 			return;
 		}
 
@@ -210,7 +233,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			}
 
 			// Save the snapshot
-			dataManager.saveSnapshot(stats);
+			dataManager.saveSnapshot(stats, "client");
 			log.debug("Saved client snapshot for '{}'", loggedInUsername);
 
 			// Notify panel to refresh if this player is selected

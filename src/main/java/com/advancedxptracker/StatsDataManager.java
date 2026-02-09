@@ -169,11 +169,11 @@ public class StatsDataManager
 	}
 
 	/**
-	 * Save a player stats snapshot
+	 * Save a player stats snapshot (source used only for debug logging).
 	 */
-	public void saveSnapshot(PlayerStats stats)
+	public void saveSnapshot(PlayerStats stats, String source)
 	{
-		log.debug("Saving snapshot for username: '{}'", stats.getUsername());
+		log.debug("Saving snapshot for username: '{}' (source: {})", stats.getUsername(), source);
 
 		String key = stats.getUsername().toLowerCase();
 		List<PlayerStats> snapshots = allPlayerData.computeIfAbsent(key, k -> new ArrayList<>());
@@ -195,7 +195,15 @@ public class StatsDataManager
 
 		// Save to file
 		saveAllData();
-		log.debug("Saved snapshot for '{}' ({} total snapshots)", stats.getUsername(), snapshots.size());
+		log.debug("Saved snapshot for '{}' (source: {}, {} total snapshots)", stats.getUsername(), source, snapshots.size());
+	}
+
+	/**
+	 * Save a player stats snapshot (no source tag; for callers that do not pass source).
+	 */
+	public void saveSnapshot(PlayerStats stats)
+	{
+		saveSnapshot(stats, "unknown");
 	}
 
 	/**
