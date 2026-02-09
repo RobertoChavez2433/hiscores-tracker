@@ -1,6 +1,6 @@
 # Hiscores Tracker
 
-A RuneLite plugin that tracks OSRS player stats and gains over time with a complete hiscores-style display.
+A RuneLite plugin that tracks OSRS player stats and gains over time with a complete hiscores-style display. Made in my spare time for me and my buddies. Devolopment is fairly slow, feedback is appreciated though
 
 ## Features
 
