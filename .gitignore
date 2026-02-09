@@ -3,6 +3,10 @@
 build/
 out/
 
+# Compiled class files
+bin/
+*.class
+
 # IntelliJ IDEA
 .idea/
 *.iml
@@ -31,3 +35,4 @@ testing-tools/
 # Temporary files
 *.tmp
 *.temp
+tmpclaude-*
