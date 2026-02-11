@@ -45,7 +45,8 @@ tasks.register('run', JavaExec) {
 	args "--developer-mode", "--debug"
 }
 
-// Same as run but without --debug: only INFO and above. Use this to confirm our plugin without log flood from other plugins.
+// Same as run but without --debug: only INFO and above.
+// Use this to confirm our plugin without log flood from other plugins.
 tasks.register('runQuiet', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = pluginMainClass
