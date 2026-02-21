@@ -205,6 +205,18 @@ public class StatsDataManager
 		String key = stats.getUsername().toLowerCase();
 		List<PlayerStats> snapshots = allPlayerData.computeIfAbsent(key, k -> new ArrayList<>());
 
+		// Coalesce: skip if XP unchanged from latest snapshot
+		if (!snapshots.isEmpty())
+		{
+			PlayerStats latest = snapshots.get(snapshots.size() - 1);
+			long currentXp = stats.getTotalXp();
+			if (currentXp != 0 && currentXp == latest.getTotalXp())
+			{
+				log.debug("Skipping duplicate snapshot for '{}' (XP unchanged)", stats.getUsername());
+				return;
+			}
+		}
+
 		// Add new snapshot
 		snapshots.add(stats);
 		log.debug("Added new snapshot, total snapshots: {}", snapshots.size());

@@ -37,6 +37,16 @@ public class PlayerStats
 	}
 
 	/**
+	 * Get total XP across all skills via the overall skill entry.
+	 * Used for snapshot coalescing — skip saving when XP unchanged.
+	 */
+	public long getTotalXp()
+	{
+		SkillData overall = skills.get("overall");
+		return overall != null ? overall.getXp() : 0;
+	}
+
+	/**
 	 * Calculate gains compared to an older snapshot
 	 */
 	public PlayerGains calculateGains(PlayerStats older)
