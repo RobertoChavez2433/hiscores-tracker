@@ -20,6 +20,7 @@ import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.util.ImageUtil;
 import okhttp3.OkHttpClient;
 
+import javax.swing.SwingUtilities;
 import java.awt.image.BufferedImage;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -229,51 +230,57 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			return;
 		}
 
-		log.debug("Capturing client stats for logged-in player: '{}'", loggedInUsername);
+		// Phase 1: Read client API (MUST be on game thread — fast, ~50 memory reads)
+		final String username = loggedInUsername;
+		final long timestamp = System.currentTimeMillis();
+		final int[] levels = new int[Skill.values().length];
+		final long[] xps = new long[Skill.values().length];
 
-		try
+		int totalLevel = 0;
+		long totalXp = 0;
+		for (Skill skill : Skill.values())
 		{
-			PlayerStats stats = new PlayerStats(loggedInUsername, System.currentTimeMillis());
-
-			// Capture all skill XP from the client
-			for (Skill skill : Skill.values())
+			if (skill != Skill.OVERALL)
 			{
-				if (skill == Skill.OVERALL)
-				{
-					// Calculate total level
-					int totalLevel = 0;
-					long totalXp = 0;
-					for (Skill s : Skill.values())
-					{
-						if (s != Skill.OVERALL)
-						{
-							totalLevel += client.getRealSkillLevel(s);
-							totalXp += client.getSkillExperience(s);
-						}
-					}
-					stats.setSkill("overall", -1, totalLevel, totalXp);
-				}
-				else
-				{
-					String skillName = skill.getName().toLowerCase();
-					int level = client.getRealSkillLevel(skill);
-					long xp = client.getSkillExperience(skill);
-					stats.setSkill(skillName, -1, level, xp); // rank unknown from client
-					log.debug("  {}: level={}, xp={}", skillName, level, xp);
-				}
+				int idx = skill.ordinal();
+				levels[idx] = client.getRealSkillLevel(skill);
+				xps[idx] = client.getSkillExperience(skill);
+				totalLevel += levels[idx];
+				totalXp += xps[idx];
 			}
-
-			// Save the snapshot
-			dataManager.saveSnapshot(stats, "client");
-			log.debug("Saved client snapshot for '{}'", loggedInUsername);
-
-			// Notify panel to refresh if this player is selected
-			panel.onClientStatsUpdated(loggedInUsername);
 		}
-		catch (Exception e)
-		{
-			log.error("Failed to capture client stats for '{}'", loggedInUsername, e);
-		}
+		final int finalTotalLevel = totalLevel;
+		final long finalTotalXp = totalXp;
+
+		log.debug("Captured client stats for '{}', dispatching to executor", username);
+
+		// Phase 2: Build snapshot + persist + notify (on background executor)
+		executor.submit(() -> {
+			try
+			{
+				PlayerStats stats = new PlayerStats(username, timestamp);
+				stats.setSkill("overall", -1, finalTotalLevel, finalTotalXp);
+
+				for (Skill skill : Skill.values())
+				{
+					if (skill != Skill.OVERALL)
+					{
+						String skillName = skill.getName().toLowerCase();
+						stats.setSkill(skillName, -1, levels[skill.ordinal()], xps[skill.ordinal()]);
+					}
+				}
+
+				dataManager.saveSnapshot(stats, "client");
+				log.debug("Saved client snapshot for '{}'", username);
+
+				// Notify panel on EDT
+				SwingUtilities.invokeLater(() -> panel.onClientStatsUpdated(username));
+			}
+			catch (Exception e)
+			{
+				log.error("Failed to process client stats for '{}'", username, e);
+			}
+		});
 	}
 
 	@Provides
