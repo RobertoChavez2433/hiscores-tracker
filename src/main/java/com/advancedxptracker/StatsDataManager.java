@@ -7,10 +7,17 @@ import net.runelite.client.RuneLite;
 import net.runelite.client.config.ConfigManager;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.lang.reflect.Type;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import javax.swing.SwingUtilities;
 import java.util.concurrent.ScheduledExecutorService;
@@ -26,8 +33,12 @@ public class StatsDataManager
 {
 	private static final String CONFIG_GROUP = "advancedxptracker";
 	private static final String ACCOUNT_TYPE_KEY_PREFIX = "accounttype_";
-	private static final long MAX_SNAPSHOT_AGE = TimeUnit.DAYS.toMillis(180); // Keep 180 days
 	private static final String DATA_FILE_NAME = "hiscores-tracker-data.json";
+	private static final int MAX_SNAPSHOTS_PER_PLAYER = 1024;
+	private static final long FULL_RESOLUTION_MS = TimeUnit.HOURS.toMillis(24);
+	private static final long HOURLY_RESOLUTION_MS = TimeUnit.DAYS.toMillis(7);
+	private static final int RETENTION_DAYS = 180;
+	private static final long MAX_SNAPSHOT_AGE = TimeUnit.DAYS.toMillis(RETENTION_DAYS);
 
 	private final ConfigManager configManager;
 	private final Gson gson;
@@ -105,7 +116,7 @@ public class StatsDataManager
 			return;
 		}
 
-		try (Reader reader = new FileReader(dataFile))
+		try (Reader reader = new InputStreamReader(new FileInputStream(dataFile), StandardCharsets.UTF_8))
 		{
 			Type type = new TypeToken<Map<String, List<PlayerStats>>>(){}.getType();
 			Map<String, List<PlayerStats>> loaded = gson.fromJson(reader, type);
@@ -122,6 +133,19 @@ public class StatsDataManager
 		catch (Exception e)
 		{
 			log.error("Failed to load data file, starting fresh", e);
+
+			// Backup corrupt file for potential manual recovery
+			try
+			{
+				File backupFile = new File(dataFile.getParentFile(), DATA_FILE_NAME + ".corrupt");
+				Files.copy(dataFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+				log.warn("Corrupt data file backed up to: {}", backupFile.getAbsolutePath());
+			}
+			catch (IOException copyEx)
+			{
+				log.error("Failed to backup corrupt data file", copyEx);
+			}
+
 			synchronized (dataLock)
 			{
 				allPlayerData = new HashMap<>();
@@ -151,9 +175,21 @@ public class StatsDataManager
 				dataFile.getParentFile().mkdirs();
 			}
 
-			try (Writer writer = new FileWriter(dataFile))
+			File tempFile = new File(dataFile.getParentFile(), DATA_FILE_NAME + ".tmp");
+			try (Writer writer = new OutputStreamWriter(new FileOutputStream(tempFile), StandardCharsets.UTF_8))
 			{
 				writer.write(json);
+			}
+			try
+			{
+				Files.move(tempFile.toPath(), dataFile.toPath(),
+					StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			}
+			catch (AtomicMoveNotSupportedException e)
+			{
+				// Fallback for filesystems that don't support atomic move
+				Files.move(tempFile.toPath(), dataFile.toPath(),
+					StandardCopyOption.REPLACE_EXISTING);
 			}
 
 			log.debug("Saved data for {} players to file", playerCount);
@@ -161,15 +197,15 @@ public class StatsDataManager
 		catch (Exception e)
 		{
 			log.error("Failed to save data file", e);
+			isDirty.set(true); // Retry on next flush cycle
 		}
 	}
 
 	/**
-	 * Clean up snapshots older than 180 days for all players
+	 * Clean up and compact snapshots for all players using tiered compaction.
 	 */
 	private void cleanupOldSnapshots()
 	{
-		long cutoffTime = System.currentTimeMillis() - MAX_SNAPSHOT_AGE;
 		int totalRemoved;
 
 		synchronized (dataLock)
@@ -180,13 +216,15 @@ public class StatsDataManager
 			{
 				List<PlayerStats> snapshots = entry.getValue();
 				int beforeSize = snapshots.size();
-				snapshots.removeIf(s -> s.getTimestamp() < cutoffTime);
+				List<PlayerStats> compacted = compactSnapshots(snapshots);
+				snapshots.clear();
+				snapshots.addAll(compacted);
 				int removed = beforeSize - snapshots.size();
 
 				if (removed > 0)
 				{
 					totalRemoved += removed;
-					log.debug("Removed {} old snapshots for player '{}'", removed, entry.getKey());
+					log.debug("Compacted {} snapshots for player '{}'", removed, entry.getKey());
 				}
 			}
 		}
@@ -194,8 +232,94 @@ public class StatsDataManager
 		if (totalRemoved > 0)
 		{
 			saveAllData();
-			log.debug("Cleanup complete: removed {} total old snapshots", totalRemoved);
+			log.debug("Cleanup complete: compacted {} total snapshots", totalRemoved);
 		}
+	}
+
+	/**
+	 * Compact a list of snapshots using tiered retention:
+	 * - age < 24h: keep all
+	 * - 24h <= age < 7d: keep 1 per calendar hour (closest to top of hour)
+	 * - 7d <= age < 180d: keep 1 per calendar day (closest to midnight)
+	 * - age >= 180d: discard
+	 *
+	 * Input list may be in any order; output is sorted oldest-first.
+	 */
+	private List<PlayerStats> compactSnapshots(List<PlayerStats> snapshots)
+	{
+		long now = System.currentTimeMillis();
+		long recentCutoff = now - FULL_RESOLUTION_MS;
+		long hourlyCutoff = now - HOURLY_RESOLUTION_MS;
+		long ancientCutoff = now - MAX_SNAPSHOT_AGE;
+
+		List<PlayerStats> recent = new ArrayList<>();
+		// key: truncated LocalDateTime (hour or day), value: best snapshot for that bucket
+		Map<LocalDateTime, PlayerStats> mediumBuckets = new LinkedHashMap<>();
+		Map<LocalDateTime, PlayerStats> oldBuckets = new LinkedHashMap<>();
+
+		ZoneId zone = ZoneId.systemDefault();
+
+		for (PlayerStats snapshot : snapshots)
+		{
+			long ts = snapshot.getTimestamp();
+
+			if (ts < ancientCutoff)
+			{
+				// Discard: older than 180 days
+				continue;
+			}
+			else if (ts >= recentCutoff)
+			{
+				// age < 24h: keep all
+				recent.add(snapshot);
+			}
+			else if (ts >= hourlyCutoff)
+			{
+				// 24h <= age < 7d: keep 1 per calendar hour (closest to top of hour)
+				LocalDateTime ldt = LocalDateTime.ofInstant(Instant.ofEpochMilli(ts), zone);
+				LocalDateTime bucket = ldt.truncatedTo(ChronoUnit.HOURS);
+				long remainder = ts % TimeUnit.HOURS.toMillis(1);
+				PlayerStats existing = mediumBuckets.get(bucket);
+				if (existing == null)
+				{
+					mediumBuckets.put(bucket, snapshot);
+				}
+				else
+				{
+					long existingRemainder = existing.getTimestamp() % TimeUnit.HOURS.toMillis(1);
+					if (remainder < existingRemainder)
+					{
+						mediumBuckets.put(bucket, snapshot);
+					}
+				}
+			}
+			else
+			{
+				// 7d <= age < 180d: keep 1 per calendar day (closest to midnight / start of day)
+				LocalDateTime ldt = LocalDateTime.ofInstant(Instant.ofEpochMilli(ts), zone);
+				LocalDateTime bucket = ldt.truncatedTo(ChronoUnit.DAYS);
+				long remainder = ts % TimeUnit.DAYS.toMillis(1);
+				PlayerStats existing = oldBuckets.get(bucket);
+				if (existing == null)
+				{
+					oldBuckets.put(bucket, snapshot);
+				}
+				else
+				{
+					long existingRemainder = existing.getTimestamp() % TimeUnit.DAYS.toMillis(1);
+					if (remainder < existingRemainder)
+					{
+						oldBuckets.put(bucket, snapshot);
+					}
+				}
+			}
+		}
+
+		List<PlayerStats> result = new ArrayList<>(oldBuckets.values());
+		result.addAll(mediumBuckets.values());
+		result.addAll(recent);
+		result.sort(Comparator.comparingLong(PlayerStats::getTimestamp));
+		return result;
 	}
 
 	/**
@@ -262,15 +386,15 @@ public class StatsDataManager
 			snapshots.add(stats);
 			log.debug("Added new snapshot, total snapshots: {}", snapshots.size());
 
-			// Remove old snapshots (older than 180 days)
-			long cutoffTime = System.currentTimeMillis() - MAX_SNAPSHOT_AGE;
-			int beforeSize = snapshots.size();
-			snapshots.removeIf(s -> s.getTimestamp() < cutoffTime);
-			int removed = beforeSize - snapshots.size();
+			// Compact snapshots using tiered retention policy
+			List<PlayerStats> compacted = compactSnapshots(snapshots);
+			snapshots.clear();
+			snapshots.addAll(compacted);
 
-			if (removed > 0)
+			// Dual-gate safety net: hard cap at 1024 snapshots
+			while (snapshots.size() > MAX_SNAPSHOTS_PER_PLAYER)
 			{
-				log.debug("Removed {} old snapshots", removed);
+				snapshots.remove(0);
 			}
 
 			finalSnapshotCount = snapshots.size();

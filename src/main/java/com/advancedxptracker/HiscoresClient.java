@@ -5,11 +5,15 @@ import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Client for fetching player data from OSRS Hiscores API
@@ -19,8 +23,31 @@ public class HiscoresClient
 {
 	private static final Map<String, String> NAME_TO_KEY_MAP = createNameToKeyMapping();
 
+	private static final int MAX_RETRIES = 3;
+	private static final long INITIAL_BACKOFF_MS = 2000;
+	private static final long CACHE_TTL_MS = 60_000;
+
 	private final OkHttpClient httpClient;
 	private final Gson gson;
+
+	private final Map<String, CachedResult> responseCache = new ConcurrentHashMap<>();
+
+	private static class CachedResult
+	{
+		final PlayerStats stats;
+		final long timestamp;
+
+		CachedResult(PlayerStats stats)
+		{
+			this.stats = stats;
+			this.timestamp = System.currentTimeMillis();
+		}
+
+		boolean isExpired()
+		{
+			return System.currentTimeMillis() - timestamp > CACHE_TTL_MS;
+		}
+	}
 
 	public HiscoresClient(OkHttpClient httpClient, Gson gson)
 	{
@@ -38,27 +65,82 @@ public class HiscoresClient
 	{
 		log.debug("Fetching hiscores for '{}' ({})", username, accountType.getDisplayName());
 
-		String url = accountType.getApiUrl() + username.replace(" ", "+");
+		String cacheKey = username.toLowerCase() + ":" + accountType.name();
+		CachedResult cached = responseCache.get(cacheKey);
+		if (cached != null && !cached.isExpired())
+		{
+			log.debug("Returning cached hiscores for '{}'", username);
+			return cached.stats;
+		}
+
+		String encodedUsername = URLEncoder.encode(username, StandardCharsets.UTF_8);
+		String url = accountType.getApiUrl() + encodedUsername;
 		log.debug("API URL: {}", url);
 
 		Request request = new Request.Builder()
 			.url(url)
 			.build();
 
-		try (Response response = httpClient.newCall(request).execute())
+		int attempt = 0;
+		while (true)
 		{
-			if (!response.isSuccessful())
+			boolean shouldRetry = false;
+			long backoff = 0;
+
+			try (Response response = httpClient.newCall(request).execute())
 			{
-				log.error("API request failed with code: {}", response.code());
-				throw new IOException("Failed to fetch hiscores: " + response.code());
+				if (response.code() == 429 && attempt < MAX_RETRIES)
+				{
+					backoff = INITIAL_BACKOFF_MS * (1L << attempt);
+					log.debug("Rate limited, retrying in {}ms (attempt {})", backoff, attempt + 1);
+					shouldRetry = true;
+				}
+				else if (!response.isSuccessful())
+				{
+					int code = response.code();
+					if (code == 404)
+					{
+						throw new PlayerNotFoundException(username);
+					}
+					else if (code == 429)
+					{
+						throw new IOException("Hiscores API rate limit reached. Please wait a moment and try again.");
+					}
+					else
+					{
+						throw new IOException("Hiscores API error (HTTP " + code + "). The service may be temporarily unavailable.");
+					}
+				}
+				else
+				{
+					ResponseBody body = response.body();
+					if (body == null)
+					{
+						throw new IOException("Empty response from Hiscores API");
+					}
+					String jsonData = body.string();
+					log.debug("API response received, body length: {} characters", jsonData.length());
+
+					PlayerStats result = parseHiscoresJson(username, jsonData);
+					responseCache.put(cacheKey, new CachedResult(result));
+					log.debug("Finished fetching for '{}'", username);
+					return result;
+				}
 			}
-
-			String body = response.body().string();
-			log.debug("API response received, body length: {} characters", body.length());
-
-			PlayerStats result = parseHiscoresJson(username, body);
-			log.debug("Finished fetching for '{}'", username);
-			return result;
+			// Response is now closed — safe to sleep
+			if (shouldRetry)
+			{
+				try
+				{
+					Thread.sleep(backoff);
+				}
+				catch (InterruptedException e)
+				{
+					Thread.currentThread().interrupt();
+					throw new IOException("Interrupted while waiting to retry Hiscores API request", e);
+				}
+				attempt++;
+			}
 		}
 	}
 
@@ -89,50 +171,57 @@ public class HiscoresClient
 		PlayerStats stats = new PlayerStats(username, System.currentTimeMillis());
 
 		// Parse skills from JSON
-		log.debug("Parsing {} skills from JSON", response.skills.length);
-		int skillsParsed = 0;
-		for (HiscoresResponse.SkillEntry skill : response.skills)
+		if (response.skills != null)
 		{
-			String key = NAME_TO_KEY_MAP.get(skill.name);
-			if (key != null)
+			log.debug("Parsing {} skills from JSON", response.skills.length);
+			int skillsParsed = 0;
+			for (HiscoresResponse.SkillEntry skill : response.skills)
 			{
-				stats.setSkill(key, skill.rank, skill.level, skill.xp);
-				skillsParsed++;
-				log.debug("  Skill '{}' → '{}': level={}, xp={}", skill.name, key, skill.level, skill.xp);
-			}
-			else
-			{
-				log.debug("Unknown skill in hiscore: {}", skill.name);
-			}
-		}
-		log.debug("Parsed {} skills", skillsParsed);
-
-		// Parse activities and bosses from JSON using name-based mapping
-		log.debug("Parsing {} activities/bosses from JSON", response.activities.length);
-		int activitiesParsed = 0;
-		int activitiesWithScores = 0;
-
-		for (HiscoresResponse.ActivityEntry activity : response.activities)
-		{
-			String key = NAME_TO_KEY_MAP.get(activity.name);
-			if (key != null)
-			{
-				stats.setActivity(key, activity.rank, (int) activity.score);
-				activitiesParsed++;
-
-				if (activity.score > 0)
+				String key = NAME_TO_KEY_MAP.get(skill.name);
+				if (key != null)
 				{
-					activitiesWithScores++;
-					log.debug("Activity '{}' -> '{}': rank={}, score={}", activity.name, key, activity.rank, activity.score);
+					stats.setSkill(key, skill.rank, skill.level, skill.xp);
+					skillsParsed++;
+					log.debug("  Skill '{}' → '{}': level={}, xp={}", skill.name, key, skill.level, skill.xp);
+				}
+				else
+				{
+					log.debug("Unknown skill in hiscore: {}", skill.name);
 				}
 			}
-			else
-			{
-				log.debug("Unknown activity in hiscore: {}", activity.name);
-			}
+			log.debug("Parsed {} skills", skillsParsed);
 		}
 
-		log.debug("Parsed {} activities/bosses total, {} have non-zero scores", activitiesParsed, activitiesWithScores);
+		// Parse activities and bosses from JSON using name-based mapping
+		if (response.activities != null)
+		{
+			log.debug("Parsing {} activities/bosses from JSON", response.activities.length);
+			int activitiesParsed = 0;
+			int activitiesWithScores = 0;
+
+			for (HiscoresResponse.ActivityEntry activity : response.activities)
+			{
+				String key = NAME_TO_KEY_MAP.get(activity.name);
+				if (key != null)
+				{
+					stats.setActivity(key, activity.rank, (int) activity.score);
+					activitiesParsed++;
+
+					if (activity.score > 0)
+					{
+						activitiesWithScores++;
+						log.debug("Activity '{}' -> '{}': rank={}, score={}", activity.name, key, activity.rank, activity.score);
+					}
+				}
+				else
+				{
+					log.debug("Unknown activity in hiscore: {}", activity.name);
+				}
+			}
+
+			log.debug("Parsed {} activities/bosses total, {} have non-zero scores", activitiesParsed, activitiesWithScores);
+		}
+
 		log.debug("Successfully parsed hiscores for '{}'", username);
 		return stats;
 	}
