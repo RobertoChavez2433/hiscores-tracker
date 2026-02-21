@@ -64,6 +64,8 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	private String loggedInUsername = null;
 	private int initializeTracker = 0;
 	private long lastAccountHash = -1L;
+	private long lastStatChangeTime = 0;
+	private boolean statsDirty = false;
 
 	private void verboseDebug(String format, Object... args)
 	{
@@ -147,6 +149,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			// Set initialization guard -- skip StatChanged events for 2 game ticks
 			// to avoid processing the login sync burst
 			initializeTracker = 2;
+			statsDirty = false;
 			verboseDebug("[GameState] {} → set init guard (2 ticks, skip StatChanged)", state.name());
 		}
 		else if (state == GameState.LOGIN_SCREEN)
@@ -172,6 +175,14 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			{
 				verboseDebug("[InitGuard] ticks left={} (StatChanged will be {} accepted)", initializeTracker, initializeTracker == 0 ? "now" : "ignored until 0");
 			}
+			return;
+		}
+
+		// Debounce: capture stats after 5 seconds of no XP changes
+		if (statsDirty && System.currentTimeMillis() - lastStatChangeTime >= 5000)
+		{
+			statsDirty = false;
+			captureClientStats();
 		}
 	}
 
@@ -187,7 +198,8 @@ public class AdvancedXpTrackerPlugin extends Plugin
 		if (loggedInUsername != null && client.getGameState() == GameState.LOGGED_IN)
 		{
 			log.debug("Stat changed for '{}': {}", loggedInUsername, statChanged.getSkill());
-			captureClientStats();
+			lastStatChangeTime = System.currentTimeMillis();
+			statsDirty = true;
 		}
 	}
 
