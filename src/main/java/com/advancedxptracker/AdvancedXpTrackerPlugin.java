@@ -63,11 +63,11 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	private HiscoresPanel panel;
 	private NavigationButton navButton;
 	private ScheduledExecutorService executor;
-	private String loggedInUsername = null;
-	private int initializeTracker = 0;
+	private volatile String loggedInUsername = null;
+	private volatile int initializeTracker = 0;
 	private long lastAccountHash = -1L;
-	private long lastStatChangeTime = 0;
-	private boolean statsDirty = false;
+	private volatile long lastStatChangeTime = 0;
+	private volatile boolean statsDirty = false;
 
 	private void verboseDebug(String format, Object... args)
 	{
@@ -88,13 +88,15 @@ public class AdvancedXpTrackerPlugin extends Plugin
 		// Initialize data manager
 		log.debug("Initializing Stats Data Manager");
 		dataManager = new StatsDataManager(configManager, gson);
-		dataManager.initialize(executor);
-		log.debug("Data Manager initialized");
 
 		// Create UI panel
 		log.debug("Creating Hiscores Panel");
 		panel = new HiscoresPanel(httpClient, dataManager, executor, spriteManager, gson);
 		log.debug("Hiscores Panel created");
+
+		// Start async load; refresh player list on EDT once data is ready
+		dataManager.initialize(executor, () -> panel.refreshPlayerList());
+		log.debug("Data Manager initialization scheduled");
 
 		// Create and add navigation button
 		final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/icon.png");
@@ -115,6 +117,12 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	protected void shutDown() throws Exception
 	{
 		log.info("Hiscores Tracker shutting down");
+
+		// Shutdown panel (cancel timers, clear caches)
+		if (panel != null)
+		{
+			panel.shutDown();
+		}
 
 		if (executor != null)
 		{
@@ -141,6 +149,13 @@ public class AdvancedXpTrackerPlugin extends Plugin
 		{
 			clientToolbar.removeNavigation(navButton);
 		}
+
+		// Reset state
+		loggedInUsername = null;
+		lastAccountHash = -1L;
+		initializeTracker = 0;
+		statsDirty = false;
+		lastStatChangeTime = 0;
 	}
 
 	@Subscribe
@@ -157,6 +172,10 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			if (currentAccountHash != lastAccountHash)
 			{
 				lastAccountHash = currentAccountHash;
+				if (client.getLocalPlayer() == null || client.getLocalPlayer().getName() == null)
+				{
+					return;
+				}
 				String username = client.getLocalPlayer().getName();
 				loggedInUsername = username;
 				log.debug("Player logged in: '{}'", username);

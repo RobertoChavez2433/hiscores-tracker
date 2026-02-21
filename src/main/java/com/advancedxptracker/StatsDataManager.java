@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import javax.swing.SwingUtilities;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -31,8 +32,10 @@ public class StatsDataManager
 	private final ConfigManager configManager;
 	private final Gson gson;
 	private final File dataFile;
-	private Map<String, List<PlayerStats>> allPlayerData;
+	private Map<String, List<PlayerStats>> allPlayerData = new HashMap<>();
+	private final Object dataLock = new Object();
 	private final AtomicBoolean isDirty = new AtomicBoolean(false);
+	private volatile boolean initialized = false;
 
 	public StatsDataManager(ConfigManager configManager, Gson gson)
 	{
@@ -42,26 +45,38 @@ public class StatsDataManager
 		// Use RuneLite's official directory constant
 		this.dataFile = new File(RuneLite.RUNELITE_DIR, DATA_FILE_NAME);
 
-		// Load all data from file
-		loadAllData();
+		log.debug("StatsDataManager created, data file: {}", dataFile.getAbsolutePath());
+	}
 
-		// Clean up old snapshots on startup
-		cleanupOldSnapshots();
-
-		log.debug("StatsDataManager initialized with data file: {}", dataFile.getAbsolutePath());
+	public boolean isInitialized()
+	{
+		return initialized;
 	}
 
 	/**
-	 * Start periodic flush of dirty data to disk.
+	 * Schedule periodic flush and load data asynchronously.
+	 * Calls onReady on the EDT once data is loaded and cleanup is complete.
 	 */
-	public void initialize(ScheduledExecutorService executor)
+	public void initialize(ScheduledExecutorService executor, Runnable onReady)
 	{
+		// Schedule periodic flush
 		executor.scheduleAtFixedRate(() -> {
 			if (isDirty.compareAndSet(true, false))
 			{
 				saveAllData();
 			}
 		}, 30, 30, TimeUnit.SECONDS);
+
+		// Load data asynchronously
+		executor.submit(() -> {
+			loadAllData();
+			cleanupOldSnapshots();
+			initialized = true;
+			if (onReady != null)
+			{
+				SwingUtilities.invokeLater(onReady);
+			}
+		});
 	}
 
 	/**
@@ -83,34 +98,51 @@ public class StatsDataManager
 		if (!dataFile.exists())
 		{
 			log.debug("Data file doesn't exist yet, starting fresh");
-			allPlayerData = new HashMap<>();
+			synchronized (dataLock)
+			{
+				allPlayerData = new HashMap<>();
+			}
 			return;
 		}
 
 		try (Reader reader = new FileReader(dataFile))
 		{
 			Type type = new TypeToken<Map<String, List<PlayerStats>>>(){}.getType();
-			allPlayerData = gson.fromJson(reader, type);
+			Map<String, List<PlayerStats>> loaded = gson.fromJson(reader, type);
 
-			if (allPlayerData == null)
+			int loadedCount;
+			synchronized (dataLock)
 			{
-				allPlayerData = new HashMap<>();
+				allPlayerData = loaded != null ? loaded : new HashMap<>();
+				loadedCount = allPlayerData.size();
 			}
 
-			log.debug("Loaded data for {} players from file", allPlayerData.size());
+			log.debug("Loaded data for {} players from file", loadedCount);
 		}
 		catch (Exception e)
 		{
 			log.error("Failed to load data file, starting fresh", e);
-			allPlayerData = new HashMap<>();
+			synchronized (dataLock)
+			{
+				allPlayerData = new HashMap<>();
+			}
 		}
 	}
 
 	/**
-	 * Save all player data to JSON file
+	 * Save all player data to JSON file.
+	 * Serializes under lock, then writes outside lock so slow I/O doesn't hold it.
 	 */
 	private void saveAllData()
 	{
+		String json;
+		int playerCount;
+		synchronized (dataLock)
+		{
+			json = gson.toJson(allPlayerData);
+			playerCount = allPlayerData.size();
+		}
+
 		try
 		{
 			// Create parent directory if it doesn't exist
@@ -121,10 +153,10 @@ public class StatsDataManager
 
 			try (Writer writer = new FileWriter(dataFile))
 			{
-				gson.toJson(allPlayerData, writer);
+				writer.write(json);
 			}
 
-			log.debug("Saved data for {} players to file", allPlayerData.size());
+			log.debug("Saved data for {} players to file", playerCount);
 		}
 		catch (Exception e)
 		{
@@ -138,19 +170,24 @@ public class StatsDataManager
 	private void cleanupOldSnapshots()
 	{
 		long cutoffTime = System.currentTimeMillis() - MAX_SNAPSHOT_AGE;
-		int totalRemoved = 0;
+		int totalRemoved;
 
-		for (Map.Entry<String, List<PlayerStats>> entry : allPlayerData.entrySet())
+		synchronized (dataLock)
 		{
-			List<PlayerStats> snapshots = entry.getValue();
-			int beforeSize = snapshots.size();
-			snapshots.removeIf(s -> s.getTimestamp() < cutoffTime);
-			int removed = beforeSize - snapshots.size();
+			totalRemoved = 0;
 
-			if (removed > 0)
+			for (Map.Entry<String, List<PlayerStats>> entry : allPlayerData.entrySet())
 			{
-				totalRemoved += removed;
-				log.debug("Removed {} old snapshots for player '{}'", removed, entry.getKey());
+				List<PlayerStats> snapshots = entry.getValue();
+				int beforeSize = snapshots.size();
+				snapshots.removeIf(s -> s.getTimestamp() < cutoffTime);
+				int removed = beforeSize - snapshots.size();
+
+				if (removed > 0)
+				{
+					totalRemoved += removed;
+					log.debug("Removed {} old snapshots for player '{}'", removed, entry.getKey());
+				}
 			}
 		}
 
@@ -203,38 +240,45 @@ public class StatsDataManager
 		log.debug("Saving snapshot for username: '{}' (source: {})", stats.getUsername(), source);
 
 		String key = stats.getUsername().toLowerCase();
-		List<PlayerStats> snapshots = allPlayerData.computeIfAbsent(key, k -> new ArrayList<>());
+		int finalSnapshotCount;
 
-		// Coalesce: skip if XP unchanged from latest snapshot
-		if (!snapshots.isEmpty())
+		synchronized (dataLock)
 		{
-			PlayerStats latest = snapshots.get(snapshots.size() - 1);
-			long currentXp = stats.getTotalXp();
-			if (currentXp != 0 && currentXp == latest.getTotalXp())
+			List<PlayerStats> snapshots = allPlayerData.computeIfAbsent(key, k -> new ArrayList<>());
+
+			// Coalesce: skip if XP unchanged from latest snapshot
+			if (!snapshots.isEmpty())
 			{
-				log.debug("Skipping duplicate snapshot for '{}' (XP unchanged)", stats.getUsername());
-				return;
+				PlayerStats latest = snapshots.get(snapshots.size() - 1);
+				long currentXp = stats.getTotalXp();
+				if (currentXp != 0 && currentXp == latest.getTotalXp())
+				{
+					log.debug("Skipping duplicate snapshot for '{}' (XP unchanged)", stats.getUsername());
+					return;
+				}
 			}
-		}
 
-		// Add new snapshot
-		snapshots.add(stats);
-		log.debug("Added new snapshot, total snapshots: {}", snapshots.size());
+			// Add new snapshot
+			snapshots.add(stats);
+			log.debug("Added new snapshot, total snapshots: {}", snapshots.size());
 
-		// Remove old snapshots (older than 180 days)
-		long cutoffTime = System.currentTimeMillis() - MAX_SNAPSHOT_AGE;
-		int beforeSize = snapshots.size();
-		snapshots.removeIf(s -> s.getTimestamp() < cutoffTime);
-		int removed = beforeSize - snapshots.size();
+			// Remove old snapshots (older than 180 days)
+			long cutoffTime = System.currentTimeMillis() - MAX_SNAPSHOT_AGE;
+			int beforeSize = snapshots.size();
+			snapshots.removeIf(s -> s.getTimestamp() < cutoffTime);
+			int removed = beforeSize - snapshots.size();
 
-		if (removed > 0)
-		{
-			log.debug("Removed {} old snapshots", removed);
+			if (removed > 0)
+			{
+				log.debug("Removed {} old snapshots", removed);
+			}
+
+			finalSnapshotCount = snapshots.size();
 		}
 
 		// Mark for periodic flush (every 30 seconds)
 		isDirty.set(true);
-		log.debug("Saved snapshot for '{}' (source: {}, {} total snapshots)", stats.getUsername(), source, snapshots.size());
+		log.debug("Saved snapshot for '{}' (source: {}, {} total snapshots)", stats.getUsername(), source, finalSnapshotCount);
 	}
 
 	/**
@@ -251,8 +295,11 @@ public class StatsDataManager
 	public List<PlayerStats> loadSnapshots(String username)
 	{
 		String key = username.toLowerCase();
-		List<PlayerStats> snapshots = allPlayerData.get(key);
-		return snapshots != null ? new ArrayList<>(snapshots) : new ArrayList<>();
+		synchronized (dataLock)
+		{
+			List<PlayerStats> snapshots = allPlayerData.get(key);
+			return snapshots != null ? new ArrayList<>(snapshots) : new ArrayList<>();
+		}
 	}
 
 	/**
@@ -309,9 +356,12 @@ public class StatsDataManager
 		String key = username.toLowerCase();
 		String typeKey = ACCOUNT_TYPE_KEY_PREFIX + username.toLowerCase();
 
-		// Remove from data file
-		allPlayerData.remove(key);
-		saveAllData();
+		// Remove from data map under lock, then let periodic flush handle persistence
+		synchronized (dataLock)
+		{
+			allPlayerData.remove(key);
+		}
+		isDirty.set(true);
 
 		// Remove account type from config
 		configManager.unsetConfiguration(CONFIG_GROUP, typeKey);
@@ -326,14 +376,17 @@ public class StatsDataManager
 	{
 		List<String> players = new ArrayList<>();
 
-		for (Map.Entry<String, List<PlayerStats>> entry : allPlayerData.entrySet())
+		synchronized (dataLock)
 		{
-			List<PlayerStats> snapshots = entry.getValue();
-			if (!snapshots.isEmpty())
+			for (Map.Entry<String, List<PlayerStats>> entry : allPlayerData.entrySet())
 			{
-				// Use original casing from first snapshot
-				String username = snapshots.get(0).getUsername();
-				players.add(username);
+				List<PlayerStats> snapshots = entry.getValue();
+				if (!snapshots.isEmpty())
+				{
+					// Use original casing from first snapshot
+					String username = snapshots.get(0).getUsername();
+					players.add(username);
+				}
 			}
 		}
 
@@ -341,11 +394,4 @@ public class StatsDataManager
 		return players;
 	}
 
-	/**
-	 * Delete all data for a player
-	 */
-	public void deletePlayer(String username)
-	{
-		removePlayer(username);
-	}
 }
