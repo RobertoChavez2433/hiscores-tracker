@@ -23,6 +23,7 @@ import okhttp3.OkHttpClient;
 import java.awt.image.BufferedImage;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Hiscores Tracker Plugin
@@ -86,6 +87,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 		// Initialize data manager
 		log.debug("Initializing Stats Data Manager");
 		dataManager = new StatsDataManager(configManager, gson);
+		dataManager.initialize(executor);
 		log.debug("Data Manager initialized");
 
 		// Create UI panel
@@ -115,7 +117,24 @@ public class AdvancedXpTrackerPlugin extends Plugin
 
 		if (executor != null)
 		{
+			// Submit flush to executor queue — serializes after any in-flight snapshot tasks
+			if (dataManager != null)
+			{
+				executor.submit(dataManager::flush);
+			}
 			executor.shutdown();
+			try
+			{
+				if (!executor.awaitTermination(2, TimeUnit.SECONDS))
+				{
+					executor.shutdownNow();
+				}
+			}
+			catch (InterruptedException e)
+			{
+				executor.shutdownNow();
+				Thread.currentThread().interrupt();
+			}
 		}
 		if (navButton != null)
 		{

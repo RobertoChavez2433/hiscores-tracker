@@ -12,7 +12,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Manages historical snapshots of player stats using a separate JSON file
@@ -30,6 +32,7 @@ public class StatsDataManager
 	private final Gson gson;
 	private final File dataFile;
 	private Map<String, List<PlayerStats>> allPlayerData;
+	private final AtomicBoolean isDirty = new AtomicBoolean(false);
 
 	public StatsDataManager(ConfigManager configManager, Gson gson)
 	{
@@ -46,6 +49,30 @@ public class StatsDataManager
 		cleanupOldSnapshots();
 
 		log.debug("StatsDataManager initialized with data file: {}", dataFile.getAbsolutePath());
+	}
+
+	/**
+	 * Start periodic flush of dirty data to disk.
+	 */
+	public void initialize(ScheduledExecutorService executor)
+	{
+		executor.scheduleAtFixedRate(() -> {
+			if (isDirty.compareAndSet(true, false))
+			{
+				saveAllData();
+			}
+		}, 30, 30, TimeUnit.SECONDS);
+	}
+
+	/**
+	 * Immediately flush pending data to disk if dirty.
+	 */
+	public void flush()
+	{
+		if (isDirty.compareAndSet(true, false))
+		{
+			saveAllData();
+		}
 	}
 
 	/**
@@ -193,8 +220,8 @@ public class StatsDataManager
 			log.debug("Removed {} old snapshots", removed);
 		}
 
-		// Save to file
-		saveAllData();
+		// Mark for periodic flush (every 30 seconds)
+		isDirty.set(true);
 		log.debug("Saved snapshot for '{}' (source: {}, {} total snapshots)", stats.getUsername(), source, snapshots.size());
 	}
 
