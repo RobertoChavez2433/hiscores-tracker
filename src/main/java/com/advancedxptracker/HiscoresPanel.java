@@ -12,7 +12,7 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Hiscores-style panel showing player stats with gains
@@ -63,8 +64,15 @@ public class HiscoresPanel extends PluginPanel
 	// Sprite cache
 	private final Map<Integer, ImageIcon> spriteCache = new HashMap<>();
 
+	// Status label
+	private enum StatusType { LOADING, ERROR, HIDDEN }
+	private final JLabel statusLabel = new JLabel();
+
 	// Auto-refresh timer
 	private ScheduledFuture<?> autoRefreshFuture;
+
+	// Stale callback protection — incremented on each new request
+	private final AtomicInteger requestGeneration = new AtomicInteger(0);
 
 	// -------------------------------------------------------------------------
 	// Inner classes
@@ -385,22 +393,28 @@ public class HiscoresPanel extends PluginPanel
 		contentPanel.add(Box.createVerticalStrut(20));
 
 		// ---- Activities ----
-		String[] activityNames = {
-			"League Points", "Bounty Hunter Hunter", "Bounty Hunter Rogue",
-			"LMS", "PvP Arena", "Soul Wars", "Rifts Closed", "Colosseum Glory", "Collections Logged"
+		String[][] activityTypes = {
+			{"League Points", "league_points"},
+			{"Bounty Hunter - Hunter", "bounty_hunter_hunter"},
+			{"Bounty Hunter - Rogue", "bounty_hunter_rogue"},
+			{"LMS", "lms"},
+			{"PvP Arena", "pvp_arena"},
+			{"Soul Wars", "soul_wars"},
+			{"Rifts Closed", "rifts_closed"},
+			{"Colosseum Glory", "colosseum_glory"},
+			{"Collections Logged", "collections_logged"}
 		};
 
 		JPanel activitiesSection = new JPanel();
 		activitiesSection.setLayout(new BoxLayout(activitiesSection, BoxLayout.Y_AXIS));
 		activitiesSection.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		for (String activityName : activityNames)
+		for (String[] activityType : activityTypes)
 		{
-			String key = activityName.toLowerCase().replace(" ", "_");
-			StatRow row = new StatRow(activityName, getActivitySpriteId(key));
-			row.update(activityName, "Score: --", "Rank: --", null,
-				"<html><b>" + activityName + "</b><br>Rank: Unranked</html>");
-			activityRows.put(key, row);
+			StatRow row = new StatRow(activityType[0], getActivitySpriteId(activityType[1]));
+			row.update(activityType[0], "Score: --", "Rank: --", null,
+				"<html><b>" + activityType[0] + "</b><br>Rank: Unranked</html>");
+			activityRows.put(activityType[1], row);
 			activitiesSection.add(row.container);
 		}
 
@@ -554,6 +568,14 @@ public class HiscoresPanel extends PluginPanel
 		// Hide daily navigation by default
 		dailyNavRow.setVisible(false);
 
+		// Status label (inline error/loading messages — hidden by default)
+		statusLabel.setVisible(false);
+		statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		statusLabel.setBorder(new EmptyBorder(4, 5, 4, 5));
+		statusLabel.setFont(statusLabel.getFont().deriveFont(Font.PLAIN, 11f));
+		topPanel.add(Box.createVerticalStrut(3));
+		topPanel.add(statusLabel);
+
 		timeframeSelector.addActionListener(e -> {
 			String selected = (String) timeframeSelector.getSelectedItem();
 			log.debug("Timeframe changed to: {}", selected);
@@ -578,8 +600,10 @@ public class HiscoresPanel extends PluginPanel
 
 	private void setupListeners()
 	{
-		// Auto-refresh every 5 minutes
-		autoRefreshFuture = executor.scheduleAtFixedRate(this::refreshPlayerData, 5, 5, TimeUnit.MINUTES);
+		// Auto-refresh every 5 minutes — bounce to EDT so loadPlayerData reads Swing state safely
+		autoRefreshFuture = executor.scheduleAtFixedRate(
+			() -> SwingUtilities.invokeLater(this::refreshPlayerData),
+			5, 5, TimeUnit.MINUTES);
 	}
 
 	public void shutDown()
@@ -658,6 +682,8 @@ public class HiscoresPanel extends PluginPanel
 		final AccountType finalAccountType = selectedType;
 		log.debug("Adding player '{}' with account type '{}'", finalUsername, finalAccountType.getDisplayName());
 
+		final int gen = requestGeneration.incrementAndGet();
+
 		// Fetch initial data in background — rows stay visible showing old/blank data until update arrives
 		executor.submit(() -> {
 			try
@@ -669,21 +695,32 @@ public class HiscoresPanel extends PluginPanel
 				log.debug("Successfully saved snapshot for: {}", finalUsername);
 
 				SwingUtilities.invokeLater(() -> {
+					if (gen != requestGeneration.get())
+					{
+						log.debug("Discarding stale response (gen {} vs current {})", gen, requestGeneration.get());
+						return;
+					}
 					log.debug("UI callback executing for player: {}", finalUsername);
 					refreshPlayerList();
 					playerSelector.setSelectedItem(finalUsername);
 					log.debug("Selected item is now: {}", playerSelector.getSelectedItem());
-					loadPlayerData();
+					// loadPlayerData() is triggered by playerSelector's action listener
 				});
 			}
-			catch (IOException e)
+			catch (PlayerNotFoundException e)
+			{
+				SwingUtilities.invokeLater(() -> {
+					if (gen != requestGeneration.get()) return;
+					setStatus(e.getMessage(), StatusType.ERROR);
+					displayBlankStats();
+				});
+			}
+			catch (Exception e)
 			{
 				log.error("Failed to fetch player: {}", finalUsername, e);
 				SwingUtilities.invokeLater(() -> {
-					JOptionPane.showMessageDialog(HiscoresPanel.this,
-						"Failed to fetch player data: " + e.getMessage(),
-						"Error",
-						JOptionPane.ERROR_MESSAGE);
+					if (gen != requestGeneration.get()) return;
+					setStatus("Failed to add player: " + e.getMessage(), StatusType.ERROR);
 					displayBlankStats();
 				});
 			}
@@ -712,6 +749,7 @@ public class HiscoresPanel extends PluginPanel
 		{
 			log.debug("Removing player: {}", selectedPlayer);
 			dataManager.removePlayer(selectedPlayer);
+			executor.submit(() -> dataManager.flush());
 			refreshPlayerList();
 
 			currentStats = null;
@@ -739,6 +777,9 @@ public class HiscoresPanel extends PluginPanel
 			return;
 		}
 
+		final int gen = requestGeneration.incrementAndGet();
+		setStatus("Fetching data...", StatusType.LOADING);
+
 		// Load in background — rows stay showing old data until update arrives
 		executor.submit(() -> {
 			try
@@ -760,27 +801,30 @@ public class HiscoresPanel extends PluginPanel
 				log.debug("Calculated gains for timeframe: {}", timeframe);
 
 				SwingUtilities.invokeLater(() -> {
+					if (gen != requestGeneration.get())
+					{
+						log.debug("Discarding stale response (gen {} vs current {})", gen, requestGeneration.get());
+						return;
+					}
+					setStatus(null, StatusType.HIDDEN);
 					currentStats = finalStats;
 					currentGains = finalGains;
 					displayStats();
 				});
 			}
-			catch (IOException e)
+			catch (PlayerNotFoundException e)
 			{
-				log.error("Failed to load player data: {}", selectedPlayer, e);
 				SwingUtilities.invokeLater(() -> {
-					showErrorMessage("Failed to fetch data: " + e.getMessage());
-					contentPanel.revalidate();
-					contentPanel.repaint();
+					if (gen != requestGeneration.get()) return;
+					setStatus(e.getMessage(), StatusType.ERROR);
 				});
 			}
 			catch (Exception e)
 			{
-				log.error("Unexpected error loading player data: {}", selectedPlayer, e);
+				log.error("Failed to load player data: {}", selectedPlayer, e);
 				SwingUtilities.invokeLater(() -> {
-					showErrorMessage("Unexpected error: " + e.getMessage());
-					contentPanel.revalidate();
-					contentPanel.repaint();
+					if (gen != requestGeneration.get()) return;
+					setStatus("Failed to fetch data: " + e.getMessage(), StatusType.ERROR);
 				});
 			}
 		});
@@ -901,7 +945,9 @@ public class HiscoresPanel extends PluginPanel
 				long gain = currentGains != null ? currentGains.getSkillGain(key).getXpGain() : 0;
 				String nameText = capitalize(key) + " lvl " + skill.getLevel();
 				String valueText = String.format("%,d XP", skill.getXp());
-				String rankText = "Rank " + String.format("%,d", skill.getRank());
+				String rankText = skill.getRank() > 0
+					? "Rank " + String.format("%,d", skill.getRank())
+					: "Unranked";
 				String gainText = gain != 0 ? "+" + String.format("%,d", gain) + " XP" : null;
 				String tooltip = buildSkillTooltip(capitalize(key), skill, gain);
 				row.update(nameText, valueText, rankText, gainText, tooltip);
@@ -996,7 +1042,7 @@ public class HiscoresPanel extends PluginPanel
 	{
 		StringBuilder tooltip = new StringBuilder("<html>");
 		tooltip.append("<b>").append(skillName).append("</b><br>");
-		tooltip.append("Rank: ").append(String.format("%,d", skill.getRank())).append("<br>");
+		tooltip.append("Rank: ").append(skill.getRank() > 0 ? String.format("%,d", skill.getRank()) : "Unranked").append("<br>");
 		tooltip.append("Level: ").append(skill.getLevel()).append("<br>");
 		tooltip.append("Experience: ").append(String.format("%,d", skill.getXp())).append("<br>");
 		if (skill.getLevel() < 99)
@@ -1050,54 +1096,71 @@ public class HiscoresPanel extends PluginPanel
 		return tooltip.toString();
 	}
 
-	private void showErrorMessage(String message)
+	private void setStatus(String message, StatusType type)
 	{
-		JOptionPane.showMessageDialog(this,
-			message,
-			"Error",
-			JOptionPane.ERROR_MESSAGE);
+		switch (type)
+		{
+			case LOADING:
+				statusLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+				statusLabel.setText(message);
+				statusLabel.setVisible(true);
+				break;
+			case ERROR:
+				statusLabel.setForeground(ColorScheme.PROGRESS_ERROR_COLOR);
+				statusLabel.setText(message);
+				statusLabel.setVisible(true);
+				break;
+			case HIDDEN:
+				statusLabel.setVisible(false);
+				break;
+		}
+		statusLabel.revalidate();
 	}
+
 
 	// -------------------------------------------------------------------------
 	// Sprite ID lookups
 	// -------------------------------------------------------------------------
 
+	private static final Map<String, Integer> SKILL_SPRITE_IDS = createSkillSpriteIdMap();
+
+	private static Map<String, Integer> createSkillSpriteIdMap()
+	{
+		Map<String, Integer> map = new HashMap<>();
+		map.put("overall", SpriteID.SKILL_TOTAL);
+		map.put("attack", SpriteID.SKILL_ATTACK);
+		map.put("defence", SpriteID.SKILL_DEFENCE);
+		map.put("strength", SpriteID.SKILL_STRENGTH);
+		map.put("hitpoints", SpriteID.SKILL_HITPOINTS);
+		map.put("ranged", SpriteID.SKILL_RANGED);
+		map.put("prayer", SpriteID.SKILL_PRAYER);
+		map.put("magic", SpriteID.SKILL_MAGIC);
+		map.put("cooking", SpriteID.SKILL_COOKING);
+		map.put("woodcutting", SpriteID.SKILL_WOODCUTTING);
+		map.put("fletching", SpriteID.SKILL_FLETCHING);
+		map.put("fishing", SpriteID.SKILL_FISHING);
+		map.put("firemaking", SpriteID.SKILL_FIREMAKING);
+		map.put("crafting", SpriteID.SKILL_CRAFTING);
+		map.put("smithing", SpriteID.SKILL_SMITHING);
+		map.put("mining", SpriteID.SKILL_MINING);
+		map.put("herblore", SpriteID.SKILL_HERBLORE);
+		map.put("agility", SpriteID.SKILL_AGILITY);
+		map.put("thieving", SpriteID.SKILL_THIEVING);
+		map.put("slayer", SpriteID.SKILL_SLAYER);
+		map.put("farming", SpriteID.SKILL_FARMING);
+		map.put("runecraft", SpriteID.SKILL_RUNECRAFT);
+		map.put("hunter", SpriteID.SKILL_HUNTER);
+		map.put("construction", SpriteID.SKILL_CONSTRUCTION);
+		map.put("sailing", SKILL_SAILING);
+		return Collections.unmodifiableMap(map);
+	}
+
 	/**
 	 * Get the sprite ID for a skill icon
 	 */
-	private int getSkillSpriteId(String skillName)
+	private static int getSkillSpriteId(String skillName)
 	{
-		switch (skillName.toLowerCase())
-		{
-			case "overall": return SpriteID.SKILL_TOTAL;
-			case "attack": return SpriteID.SKILL_ATTACK;
-			case "defence": return SpriteID.SKILL_DEFENCE;
-			case "strength": return SpriteID.SKILL_STRENGTH;
-			case "hitpoints": return SpriteID.SKILL_HITPOINTS;
-			case "ranged": return SpriteID.SKILL_RANGED;
-			case "prayer": return SpriteID.SKILL_PRAYER;
-			case "magic": return SpriteID.SKILL_MAGIC;
-			case "cooking": return SpriteID.SKILL_COOKING;
-			case "woodcutting": return SpriteID.SKILL_WOODCUTTING;
-			case "fletching": return SpriteID.SKILL_FLETCHING;
-			case "fishing": return SpriteID.SKILL_FISHING;
-			case "firemaking": return SpriteID.SKILL_FIREMAKING;
-			case "crafting": return SpriteID.SKILL_CRAFTING;
-			case "smithing": return SpriteID.SKILL_SMITHING;
-			case "mining": return SpriteID.SKILL_MINING;
-			case "herblore": return SpriteID.SKILL_HERBLORE;
-			case "agility": return SpriteID.SKILL_AGILITY;
-			case "thieving": return SpriteID.SKILL_THIEVING;
-			case "slayer": return SpriteID.SKILL_SLAYER;
-			case "farming": return SpriteID.SKILL_FARMING;
-			case "runecraft": return SpriteID.SKILL_RUNECRAFT;
-			case "hunter": return SpriteID.SKILL_HUNTER;
-			case "construction": return SpriteID.SKILL_CONSTRUCTION;
-			case "sailing":
-				// Sailing skill added Nov 2025
-				return SKILL_SAILING;
-			default: return -1;
-		}
+		return SKILL_SPRITE_IDS.getOrDefault(skillName.toLowerCase(), -1);
 	}
 
 	/**
@@ -1218,22 +1281,28 @@ public class HiscoresPanel extends PluginPanel
 		return s.substring(0, 1).toUpperCase() + s.substring(1);
 	}
 
-	/**
-	 * Get the XP required for a given level using OSRS XP formula
-	 */
-	private long getXpForLevel(int level)
-	{
-		if (level <= 1)
-		{
-			return 0;
-		}
+	private static final long[] XP_TABLE = computeXpTable();
 
-		long xp = 0;
-		for (int i = 1; i < level; i++)
+	private static long[] computeXpTable()
+	{
+		long[] table = new long[100]; // index 0 unused, 1-99
+		table[1] = 0;
+		for (int level = 2; level <= 99; level++)
 		{
-			xp += (long) Math.floor(i + 300.0 * Math.pow(2.0, i / 7.0));
+			double points = 0;
+			for (int i = 1; i < level; i++)
+			{
+				points += Math.floor(i + 300.0 * Math.pow(2.0, i / 7.0));
+			}
+			table[level] = (long) Math.floor(points / 4.0);
 		}
-		return xp / 4;
+		return table;
+	}
+
+	private static long getXpForLevel(int level)
+	{
+		if (level < 1 || level > 99) return 0;
+		return XP_TABLE[level];
 	}
 
 	/**

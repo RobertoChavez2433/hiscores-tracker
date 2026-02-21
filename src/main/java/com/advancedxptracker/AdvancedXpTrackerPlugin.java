@@ -83,7 +83,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 		log.info("Hiscores Tracker starting up");
 
 		// Create executor for background tasks
-		executor = Executors.newScheduledThreadPool(2);
+		executor = Executors.newScheduledThreadPool(1);
 
 		// Initialize data manager
 		log.debug("Initializing Stats Data Manager");
