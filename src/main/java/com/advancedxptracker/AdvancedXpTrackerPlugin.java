@@ -100,7 +100,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 
 		// Create UI panel
 		log.debug("Creating Hiscores Panel");
-		panel = new HiscoresPanel(hiscoresClient, dataManager, executor, spriteManager);
+		panel = new HiscoresPanel(hiscoresClient, dataManager, executor, spriteManager, configManager);
 		log.debug("Hiscores Panel created");
 
 		autoFetchManager = new AutoDailyFetchManager(

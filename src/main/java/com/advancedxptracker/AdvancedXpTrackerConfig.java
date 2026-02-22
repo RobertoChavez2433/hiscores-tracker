@@ -87,6 +87,17 @@ public interface AdvancedXpTrackerConfig extends Config
 	// ===== DEVELOPER (testing / debugging) =====
 
 	@ConfigItem(
+		keyName = "lastSelectedPlayer",
+		name = "",
+		description = "",
+		hidden = true
+	)
+	default String lastSelectedPlayer()
+	{
+		return "";
+	}
+
+	@ConfigItem(
 		keyName = "verboseDebugLogging",
 		name = "Verbose debug logging",
 		description = "When enabled, log extra detail at DEBUG: every game state change, login sync guard, and snapshot source. Use with Run Task 'Run RuneLite with plugin' (--debug) and filter terminal for 'Hiscores' or 'advancedxptracker'.",

@@ -3,6 +3,7 @@ package com.advancedxptracker;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.SpriteID;
 import net.runelite.client.game.SpriteManager;
+import net.runelite.client.config.ConfigManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.util.ImageUtil;
@@ -32,10 +33,14 @@ public class HiscoresPanel extends PluginPanel
 	private static final int HISCORE_DOOM_OF_MOKHAIOTL = 6347;  // Red demon mask - VERIFIED
 	private static final int HISCORE_SHELLBANE_GRYPHON = 6349;  // Orange/tan creature - VERIFIED
 
+	private static final String CONFIG_GROUP = "advancedxptracker";
+	private static final String CONFIG_KEY_LAST_PLAYER = "lastSelectedPlayer";
+
 	private final HiscoresClient hiscoresClient;
 	private final StatsDataManager dataManager;
 	private final ScheduledExecutorService executor;
 	private final SpriteManager spriteManager;
+	private final ConfigManager configManager;
 
 	// UI Components
 	private JComboBox<String> playerSelector;
@@ -71,6 +76,9 @@ public class HiscoresPanel extends PluginPanel
 
 	// Stale callback protection — incremented on each new request
 	private final AtomicInteger requestGeneration = new AtomicInteger(0);
+
+	// Suppresses ActionListener during combo box rebuilds (addItem fires listener on empty box)
+	private boolean suppressPlayerSelection = false;
 
 	// -------------------------------------------------------------------------
 	// Inner classes
@@ -262,13 +270,14 @@ public class HiscoresPanel extends PluginPanel
 	// Constructor
 	// -------------------------------------------------------------------------
 
-	public HiscoresPanel(HiscoresClient hiscoresClient, StatsDataManager dataManager, ScheduledExecutorService executor, SpriteManager spriteManager)
+	public HiscoresPanel(HiscoresClient hiscoresClient, StatsDataManager dataManager, ScheduledExecutorService executor, SpriteManager spriteManager, ConfigManager configManager)
 	{
 		super(false);
 		this.hiscoresClient = hiscoresClient;
 		this.dataManager = dataManager;
 		this.executor = executor;
 		this.spriteManager = spriteManager;
+		this.configManager = configManager;
 
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -324,6 +333,10 @@ public class HiscoresPanel extends PluginPanel
 
 		// Add action listener AFTER initial setup to avoid triggering during initialization
 		playerSelector.addActionListener(e -> {
+			if (suppressPlayerSelection)
+			{
+				return;
+			}
 			log.debug("Player selector changed to: {}", playerSelector.getSelectedItem());
 			loadPlayerData();
 		});
@@ -589,6 +602,9 @@ public class HiscoresPanel extends PluginPanel
 			}
 		});
 
+		// Sync initial visibility with default timeframe
+		dailyNavRow.setVisible("Today".equals(timeframeSelector.getSelectedItem()));
+
 		return topPanel;
 	}
 
@@ -639,16 +655,57 @@ public class HiscoresPanel extends PluginPanel
 			return;
 		}
 		log.debug("Refreshing player list");
-		playerSelector.removeAllItems();
-		List<String> players = dataManager.getTrackedPlayers();
-		log.debug("Found {} tracked players", players.size());
-		for (String player : players)
+
+		// Suppress listener during combo box rebuild (addItem on empty box auto-selects and fires)
+		suppressPlayerSelection = true;
+		try
 		{
-			log.debug("Adding player to selector: {}", player);
-			playerSelector.addItem(player);
+			playerSelector.removeAllItems();
+			List<String> players = dataManager.getTrackedPlayers();
+			log.debug("Found {} tracked players", players.size());
+			for (String player : players)
+			{
+				log.debug("Adding player to selector: {}", player);
+				playerSelector.addItem(player);
+			}
+
+			// ConfigManager is thread-safe; EDT access is fine (RuneLite convention)
+			String lastPlayer = configManager.getConfiguration(CONFIG_GROUP, CONFIG_KEY_LAST_PLAYER);
+			if (lastPlayer != null && !lastPlayer.isEmpty())
+			{
+				boolean found = false;
+				for (int i = 0; i < playerSelector.getItemCount(); i++)
+				{
+					if (lastPlayer.equals(playerSelector.getItemAt(i)))
+					{
+						playerSelector.setSelectedIndex(i);
+						found = true;
+						break;
+					}
+				}
+				if (!found)
+				{
+					log.debug("Last selected player '{}' no longer tracked, clearing config", lastPlayer);
+					configManager.unsetConfiguration(CONFIG_GROUP, CONFIG_KEY_LAST_PLAYER);
+					playerSelector.setSelectedIndex(-1);
+				}
+			}
+			else
+			{
+				playerSelector.setSelectedIndex(-1);
+			}
 		}
-		// Deselect any auto-selected item to prevent auto-loading
-		playerSelector.setSelectedIndex(-1);
+		finally
+		{
+			suppressPlayerSelection = false;
+		}
+
+		// Fire listener manually if a player was restored, so loadPlayerData() runs
+		if (playerSelector.getSelectedIndex() != -1)
+		{
+			loadPlayerData();
+		}
+
 		log.debug("Player list refresh complete, selector has {} items", playerSelector.getItemCount());
 	}
 
@@ -774,6 +831,9 @@ public class HiscoresPanel extends PluginPanel
 			displayBlankStats();
 			return;
 		}
+
+		// Persist last selected player for session restore
+		configManager.setConfiguration(CONFIG_GROUP, CONFIG_KEY_LAST_PLAYER, selectedPlayer);
 
 		final int gen = requestGeneration.incrementAndGet();
 		setStatus("Fetching data...", StatusType.LOADING);
