@@ -100,7 +100,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 
 		// Create UI panel
 		log.debug("Creating Hiscores Panel");
-		panel = new HiscoresPanel(hiscoresClient, dataManager, executor, spriteManager, configManager);
+		panel = new HiscoresPanel(hiscoresClient, dataManager, executor, autoFetchExecutor, spriteManager, configManager);
 		log.debug("Hiscores Panel created");
 
 		autoFetchManager = new AutoDailyFetchManager(
@@ -148,7 +148,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			autoFetchExecutor.shutdown();
 			try
 			{
-				if (!autoFetchExecutor.awaitTermination(2, TimeUnit.SECONDS))
+				if (!autoFetchExecutor.awaitTermination(5, TimeUnit.SECONDS))
 				{
 					autoFetchExecutor.shutdownNow();
 				}
@@ -170,7 +170,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			executor.shutdown();
 			try
 			{
-				if (!executor.awaitTermination(2, TimeUnit.SECONDS))
+				if (!executor.awaitTermination(5, TimeUnit.SECONDS))
 				{
 					executor.shutdownNow();
 				}

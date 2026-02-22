@@ -39,7 +39,8 @@ public interface AdvancedXpTrackerConfig extends Config
 		name = "Enable Auto-Refresh",
 		description = "Automatically refresh hiscores data periodically",
 		position = 1,
-		section = refreshSection
+		section = refreshSection,
+		hidden = true
 	)
 	default boolean autoRefreshEnabled()
 	{
@@ -51,7 +52,8 @@ public interface AdvancedXpTrackerConfig extends Config
 		name = "Refresh Interval (Minutes)",
 		description = "How often to automatically refresh data (minimum 5 minutes)",
 		position = 2,
-		section = refreshSection
+		section = refreshSection,
+		hidden = true
 	)
 	default int refreshIntervalMinutes()
 	{

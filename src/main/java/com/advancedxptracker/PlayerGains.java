@@ -13,6 +13,7 @@ public class PlayerGains
 {
 	private final PlayerStats current;
 	private final PlayerStats previous;
+	private static final SkillGain ZERO_SKILL_GAIN = new SkillGain(0, 0);
 	private final Map<String, SkillGain> skillGains;
 	private final Map<String, Integer> activityGains;
 
@@ -36,7 +37,7 @@ public class PlayerGains
 
 	public SkillGain getSkillGain(String skillName)
 	{
-		return skillGains.getOrDefault(skillName, new SkillGain(0, 0));
+		return skillGains.getOrDefault(skillName, ZERO_SKILL_GAIN);
 	}
 
 	public int getActivityGain(String activityName)

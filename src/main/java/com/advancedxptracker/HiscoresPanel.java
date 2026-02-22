@@ -39,6 +39,7 @@ public class HiscoresPanel extends PluginPanel
 	private final HiscoresClient hiscoresClient;
 	private final StatsDataManager dataManager;
 	private final ScheduledExecutorService executor;
+	private final ScheduledExecutorService httpExecutor;
 	private final SpriteManager spriteManager;
 	private final ConfigManager configManager;
 
@@ -180,6 +181,7 @@ public class HiscoresPanel extends PluginPanel
 
 	private class BossRow
 	{
+		final String displayName;
 		final JPanel container;
 		final JLabel iconLabel;
 		final JLabel kcLabel;
@@ -187,6 +189,7 @@ public class HiscoresPanel extends PluginPanel
 
 		BossRow(String displayName, int spriteId)
 		{
+			this.displayName = displayName;
 			container = new JPanel();
 			container.setLayout(new BoxLayout(container, BoxLayout.X_AXIS));
 			container.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -270,12 +273,13 @@ public class HiscoresPanel extends PluginPanel
 	// Constructor
 	// -------------------------------------------------------------------------
 
-	public HiscoresPanel(HiscoresClient hiscoresClient, StatsDataManager dataManager, ScheduledExecutorService executor, SpriteManager spriteManager, ConfigManager configManager)
+	public HiscoresPanel(HiscoresClient hiscoresClient, StatsDataManager dataManager, ScheduledExecutorService executor, ScheduledExecutorService httpExecutor, SpriteManager spriteManager, ConfigManager configManager)
 	{
 		super(false);
 		this.hiscoresClient = hiscoresClient;
 		this.dataManager = dataManager;
 		this.executor = executor;
+		this.httpExecutor = httpExecutor;
 		this.spriteManager = spriteManager;
 		this.configManager = configManager;
 
@@ -740,7 +744,7 @@ public class HiscoresPanel extends PluginPanel
 		final int gen = requestGeneration.incrementAndGet();
 
 		// Fetch initial data in background — rows stay visible showing old/blank data until update arrives
-		executor.submit(() -> {
+		httpExecutor.submit(() -> {
 			try
 			{
 				log.debug("Fetching hiscores for new player: {} ({})", finalUsername, finalAccountType.getDisplayName());
@@ -838,8 +842,14 @@ public class HiscoresPanel extends PluginPanel
 		final int gen = requestGeneration.incrementAndGet();
 		setStatus("Fetching data...", StatusType.LOADING);
 
-		// Load in background — rows stay showing old data until update arrives
-		executor.submit(() -> {
+		// Capture Swing state on EDT before submitting to background thread
+		final String timeframe = (String) timeframeSelector.getSelectedItem();
+		final int days = getTimeframeDays(timeframe);
+
+		// HTTP fetch on httpExecutor (isolated from file I/O flush timer on executor).
+		// Data operations (saveSnapshot, getSnapshotFromDaysAgo) are fast and lock-protected
+		// via dataLock — acceptable to run here rather than bouncing to executor.
+		httpExecutor.submit(() -> {
 			try
 			{
 				log.debug("Loading player data for: {}", selectedPlayer);
@@ -851,8 +861,6 @@ public class HiscoresPanel extends PluginPanel
 				dataManager.saveSnapshot(stats, "hiscores_api");
 				log.debug("Successfully fetched and saved data for: {}", selectedPlayer);
 
-				String timeframe = (String) timeframeSelector.getSelectedItem();
-				int days = getTimeframeDays(timeframe);
 				PlayerStats olderStats = dataManager.getSnapshotFromDaysAgo(stats.getUsername(), days);
 				final PlayerStats finalStats = stats;
 				final PlayerGains finalGains = stats.calculateGains(olderStats);
@@ -904,13 +912,16 @@ public class HiscoresPanel extends PluginPanel
 		}
 
 		final String username = currentStats.getUsername();
+		// Capture Swing state on EDT before submitting to background thread
 		final String timeframe = (String) timeframeSelector.getSelectedItem();
 		final int days = getTimeframeDays(timeframe);
 		final PlayerStats snap = currentStats;
+		final int gen = requestGeneration.incrementAndGet();
 		executor.submit(() -> {
 			PlayerStats older = dataManager.getSnapshotFromDaysAgo(username, days);
 			PlayerGains gains = snap.calculateGains(older);
 			SwingUtilities.invokeLater(() -> {
+				if (gen != requestGeneration.get()) return;
 				currentGains = gains;
 				displayStats();
 			});
@@ -940,27 +951,51 @@ public class HiscoresPanel extends PluginPanel
 		final String username = currentStats.getUsername();
 		final int dayOffset = currentDayOffset;
 		final PlayerStats snap = currentStats;
+		final int gen = requestGeneration.incrementAndGet();
 		executor.submit(() -> {
+			// dayOffset=0 targets today's midnight; dayOffset+1 targets yesterday's midnight
 			PlayerStats dayStats = dataManager.getSnapshotFromDaysAgo(username, dayOffset);
 			PlayerStats nextDayStats = dataManager.getSnapshotFromDaysAgo(username, dayOffset + 1);
 
 			final PlayerGains gains;
-			if (dayStats != null && nextDayStats != null)
+			final boolean noBaseline;
+			if (dayOffset == 0 && dayStats != null)
 			{
+				// Today: gains = current stats vs start-of-today baseline
+				gains = snap.calculateGains(dayStats);
+				noBaseline = false;
+			}
+			else if (dayStats != null && nextDayStats != null)
+			{
+				// Historical days: gains between day start and previous day start
 				gains = dayStats.calculateGains(nextDayStats);
+				noBaseline = false;
 			}
 			else if (dayStats != null)
 			{
+				// No prior-day baseline — show zeros with explanation
 				gains = dayStats.calculateGains(dayStats);
+				noBaseline = true;
 			}
 			else
 			{
+				// No snapshot data at all for this day
 				PlayerStats emptyStats = new PlayerStats(snap.getUsername(), System.currentTimeMillis());
 				gains = emptyStats.calculateGains(emptyStats);
+				noBaseline = true;
 			}
 
 			SwingUtilities.invokeLater(() -> {
+				if (gen != requestGeneration.get()) return;
 				nextDayButton.setEnabled(dayOffset > 0);
+				if (noBaseline)
+				{
+					setStatus("No baseline data for this day", StatusType.LOADING);
+				}
+				else
+				{
+					setStatus(null, StatusType.HIDDEN);
+				}
 				currentGains = gains;
 				displayStats();
 			});
@@ -971,7 +1006,7 @@ public class HiscoresPanel extends PluginPanel
 	{
 		switch (timeframe)
 		{
-			case "Today": return 1;
+			case "Today": return 0;
 			case "Week": return 7;
 			case "Month": return 30;
 			case "Year": return 365;
@@ -1033,8 +1068,7 @@ public class HiscoresPanel extends PluginPanel
 			int rank = (activity != null) ? activity.getRank() : -1;
 			int gain = (currentGains != null) ? currentGains.getActivityGain(key) : 0;
 
-			String displayName = capitalize(key.replace("_", " "));
-			String tooltip = buildBossTooltip(displayName, score, rank, gain);
+			String tooltip = buildBossTooltip(row.displayName, score, rank, gain);
 			row.update(score, rank, gain, tooltip);
 		}
 
@@ -1083,9 +1117,9 @@ public class HiscoresPanel extends PluginPanel
 		}
 		for (Map.Entry<String, BossRow> entry : bossRows.entrySet())
 		{
-			String displayName = capitalize(entry.getKey().replace("_", " "));
-			String tooltip = "<html><b>" + displayName + "</b><br>Rank: Unranked<br>KC: 0</html>";
-			entry.getValue().reset(tooltip);
+			BossRow row = entry.getValue();
+			String tooltip = "<html><b>" + row.displayName + "</b><br>Rank: Unranked<br>KC: 0</html>";
+			row.reset(tooltip);
 		}
 
 		contentPanel.revalidate();
@@ -1402,6 +1436,7 @@ public class HiscoresPanel extends PluginPanel
 			// Capture Swing state on EDT before submitting to executor
 			final String timeframe = (String) timeframeSelector.getSelectedItem();
 			final int days = getTimeframeDays(timeframe);
+			final int gen = requestGeneration.incrementAndGet();
 			executor.submit(() -> {
 				List<PlayerStats> snapshots = dataManager.loadSnapshots(username);
 				if (!snapshots.isEmpty())
@@ -1410,6 +1445,7 @@ public class HiscoresPanel extends PluginPanel
 					PlayerStats olderStats = dataManager.getSnapshotFromDaysAgo(username, days);
 					PlayerGains gains = latest.calculateGains(olderStats);
 					SwingUtilities.invokeLater(() -> {
+						if (gen != requestGeneration.get()) return;
 						currentStats = latest;
 						currentGains = gains;
 						displayStats();

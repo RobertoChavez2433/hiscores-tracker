@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
@@ -47,6 +48,8 @@ public class StatsDataManager
 	private final Object dataLock = new Object();
 	private final AtomicBoolean isDirty = new AtomicBoolean(false);
 	private volatile boolean initialized = false;
+	private int savesSinceCompaction = 0;
+	private static final int COMPACT_INTERVAL = 50;
 
 	public StatsDataManager(ConfigManager configManager, Gson gson)
 	{
@@ -386,10 +389,15 @@ public class StatsDataManager
 			snapshots.add(stats);
 			log.debug("Added new snapshot, total snapshots: {}", snapshots.size());
 
-			// Compact snapshots using tiered retention policy
-			List<PlayerStats> compacted = compactSnapshots(snapshots);
-			snapshots.clear();
-			snapshots.addAll(compacted);
+			// Compact snapshots periodically (full compaction runs at startup via cleanupOldSnapshots)
+			savesSinceCompaction++;
+			if (savesSinceCompaction >= COMPACT_INTERVAL)
+			{
+				savesSinceCompaction = 0;
+				List<PlayerStats> compacted = compactSnapshots(snapshots);
+				snapshots.clear();
+				snapshots.addAll(compacted);
+			}
 
 			// Dual-gate safety net: hard cap at 1024 snapshots
 			while (snapshots.size() > MAX_SNAPSHOTS_PER_PLAYER)
@@ -469,7 +477,11 @@ public class StatsDataManager
 			return null;
 		}
 
-		long targetTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(days);
+		// Target local calendar midnight N days ago (e.g., days=0 → start of today)
+		long targetTime = LocalDate.now().minusDays(days)
+			.atStartOfDay(ZoneId.systemDefault())
+			.toInstant()
+			.toEpochMilli();
 
 		// Find closest snapshot to target time
 		PlayerStats closest = null;
@@ -532,6 +544,7 @@ public class StatsDataManager
 			}
 		}
 
+		Collections.sort(players, String.CASE_INSENSITIVE_ORDER);
 		log.debug("Returning {} tracked players", players.size());
 		return players;
 	}
