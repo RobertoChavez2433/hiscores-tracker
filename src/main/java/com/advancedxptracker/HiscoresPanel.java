@@ -6,8 +6,6 @@ import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.util.ImageUtil;
-import okhttp3.OkHttpClient;
-
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
@@ -264,10 +262,10 @@ public class HiscoresPanel extends PluginPanel
 	// Constructor
 	// -------------------------------------------------------------------------
 
-	public HiscoresPanel(OkHttpClient httpClient, StatsDataManager dataManager, ScheduledExecutorService executor, SpriteManager spriteManager, com.google.gson.Gson gson)
+	public HiscoresPanel(HiscoresClient hiscoresClient, StatsDataManager dataManager, ScheduledExecutorService executor, SpriteManager spriteManager)
 	{
 		super(false);
-		this.hiscoresClient = new HiscoresClient(httpClient, gson);
+		this.hiscoresClient = hiscoresClient;
 		this.dataManager = dataManager;
 		this.executor = executor;
 		this.spriteManager = spriteManager;
@@ -1303,6 +1301,31 @@ public class HiscoresPanel extends PluginPanel
 	{
 		if (level < 1 || level > 99) return 0;
 		return XP_TABLE[level];
+	}
+
+	/**
+	 * Called when auto-daily fetch completes for a player.
+	 * Already on EDT (caller wraps in SwingUtilities.invokeLater).
+	 */
+	public void onAutoFetchCompleted(String username, PlayerStats stats)
+	{
+		String selectedPlayer = (String) playerSelector.getSelectedItem();
+		if (username.equalsIgnoreCase(selectedPlayer))
+		{
+			final int gen = requestGeneration.incrementAndGet();
+			final String timeframe = (String) timeframeSelector.getSelectedItem();
+			final int days = getTimeframeDays(timeframe);
+			executor.submit(() -> {
+				PlayerStats older = dataManager.getSnapshotFromDaysAgo(username, days);
+				PlayerGains gains = stats.calculateGains(older);
+				SwingUtilities.invokeLater(() -> {
+					if (gen != requestGeneration.get()) return;
+					currentStats = stats;
+					currentGains = gains;
+					displayStats();
+				});
+			});
+		}
 	}
 
 	/**
