@@ -60,9 +60,12 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	private Gson gson;
 
 	private StatsDataManager dataManager;
+	private HiscoresClient hiscoresClient;
 	private HiscoresPanel panel;
 	private NavigationButton navButton;
 	private ScheduledExecutorService executor;
+	private ScheduledExecutorService autoFetchExecutor;
+	private AutoDailyFetchManager autoFetchManager;
 	private volatile String loggedInUsername = null;
 	private volatile int initializeTracker = 0;
 	private long lastAccountHash = -1L;
@@ -82,17 +85,28 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	{
 		log.info("Hiscores Tracker starting up");
 
-		// Create executor for background tasks
+		// Create executor for background tasks (file I/O, gains calculations)
 		executor = Executors.newScheduledThreadPool(1);
+
+		// Create dedicated executor for auto-fetch HTTP work (isolated from file I/O executor)
+		autoFetchExecutor = Executors.newSingleThreadScheduledExecutor();
 
 		// Initialize data manager
 		log.debug("Initializing Stats Data Manager");
 		dataManager = new StatsDataManager(configManager, gson);
 
+		// Create hiscores client
+		hiscoresClient = new HiscoresClient(httpClient, gson);
+
 		// Create UI panel
 		log.debug("Creating Hiscores Panel");
-		panel = new HiscoresPanel(httpClient, dataManager, executor, spriteManager, gson);
+		panel = new HiscoresPanel(hiscoresClient, dataManager, executor, spriteManager);
 		log.debug("Hiscores Panel created");
+
+		autoFetchManager = new AutoDailyFetchManager(
+			hiscoresClient, dataManager, autoFetchExecutor,
+			(username, stats) -> SwingUtilities.invokeLater(() -> panel.onAutoFetchCompleted(username, stats))
+		);
 
 		// Start async load; refresh player list on EDT once data is ready
 		dataManager.initialize(executor, () -> panel.refreshPlayerList());
@@ -122,6 +136,28 @@ public class AdvancedXpTrackerPlugin extends Plugin
 		if (panel != null)
 		{
 			panel.shutDown();
+		}
+
+		if (autoFetchManager != null)
+		{
+			autoFetchManager.shutdown();
+		}
+
+		if (autoFetchExecutor != null)
+		{
+			autoFetchExecutor.shutdown();
+			try
+			{
+				if (!autoFetchExecutor.awaitTermination(2, TimeUnit.SECONDS))
+				{
+					autoFetchExecutor.shutdownNow();
+				}
+			}
+			catch (InterruptedException e)
+			{
+				autoFetchExecutor.shutdownNow();
+				Thread.currentThread().interrupt();
+			}
 		}
 
 		if (executor != null)
@@ -181,6 +217,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 				log.debug("Player logged in: '{}'", username);
 				verboseDebug("[GameState] LOGGED_IN → capturing client stats (account changed)");
 				captureClientStats();
+				autoFetchManager.onPlayerLoggedIn(username);
 			}
 		}
 		else if (state == GameState.LOGGING_IN || state == GameState.HOPPING)
@@ -197,6 +234,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 			{
 				log.debug("Player '{}' logged out", loggedInUsername);
 				verboseDebug("[GameState] LOGIN_SCREEN → cleared logged-in user");
+				autoFetchManager.onPlayerLoggedOut();
 				loggedInUsername = null;
 				lastAccountHash = -1L;
 			}
@@ -277,7 +315,7 @@ public class AdvancedXpTrackerPlugin extends Plugin
 		executor.submit(() -> {
 			try
 			{
-				PlayerStats stats = new PlayerStats(username, timestamp);
+				PlayerStats stats = new PlayerStats(username, timestamp, "client");
 				stats.setSkill("overall", -1, finalTotalLevel, finalTotalXp);
 
 				for (Skill skill : Skill.values())
