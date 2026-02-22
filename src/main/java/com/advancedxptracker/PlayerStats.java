@@ -17,13 +17,20 @@ public class PlayerStats
 	private final long timestamp;
 	private final Map<String, SkillData> skills;
 	private final Map<String, ActivityData> activities;
+	private final String source;
 
-	public PlayerStats(String username, long timestamp)
+	public PlayerStats(String username, long timestamp, String source)
 	{
 		this.username = username;
 		this.timestamp = timestamp;
+		this.source = source;
 		this.skills = new HashMap<>();
 		this.activities = new HashMap<>();
+	}
+
+	public PlayerStats(String username, long timestamp)
+	{
+		this(username, timestamp, null);
 	}
 
 	public void setSkill(String name, int rank, int level, long xp)

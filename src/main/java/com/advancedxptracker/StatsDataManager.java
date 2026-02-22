@@ -441,6 +441,24 @@ public class StatsDataManager
 	}
 
 	/**
+	 * Get the most recent snapshot fetched from the Hiscores API (source == "hiscores_api").
+	 * Returns null if no such snapshot exists.
+	 */
+	public PlayerStats getLatestHiscoresSnapshot(String username)
+	{
+		List<PlayerStats> snapshots = loadSnapshots(username);
+		for (int i = snapshots.size() - 1; i >= 0; i--)
+		{
+			PlayerStats snapshot = snapshots.get(i);
+			if ("hiscores_api".equals(snapshot.getSource()))
+			{
+				return snapshot;
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * Get a snapshot from X days ago (closest match)
 	 */
 	public PlayerStats getSnapshotFromDaysAgo(String username, int days)

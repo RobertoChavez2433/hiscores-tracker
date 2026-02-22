@@ -168,7 +168,7 @@ public class HiscoresClient
 			throw new RuntimeException("Hiscores response is null");
 		}
 
-		PlayerStats stats = new PlayerStats(username, System.currentTimeMillis());
+		PlayerStats stats = new PlayerStats(username, System.currentTimeMillis(), "hiscores_api");
 
 		// Parse skills from JSON
 		if (response.skills != null)
