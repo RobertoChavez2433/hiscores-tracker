@@ -23,8 +23,6 @@ public class HiscoresClient
 {
 	private static final Map<String, String> NAME_TO_KEY_MAP = createNameToKeyMapping();
 
-	private static final int MAX_RETRIES = 3;
-	private static final long INITIAL_BACKOFF_MS = 2000;
 	private static final long CACHE_TTL_MS = 60_000;
 
 	private final OkHttpClient httpClient;
@@ -81,66 +79,37 @@ public class HiscoresClient
 			.url(url)
 			.build();
 
-		int attempt = 0;
-		while (true)
+		try (Response response = httpClient.newCall(request).execute())
 		{
-			boolean shouldRetry = false;
-			long backoff = 0;
-
-			try (Response response = httpClient.newCall(request).execute())
+			if (!response.isSuccessful())
 			{
-				if (response.code() == 429 && attempt < MAX_RETRIES)
+				int code = response.code();
+				if (code == 404)
 				{
-					backoff = INITIAL_BACKOFF_MS * (1L << attempt);
-					log.debug("Rate limited, retrying in {}ms (attempt {})", backoff, attempt + 1);
-					shouldRetry = true;
+					throw new PlayerNotFoundException(username);
 				}
-				else if (!response.isSuccessful())
+				else if (code == 429)
 				{
-					int code = response.code();
-					if (code == 404)
-					{
-						throw new PlayerNotFoundException(username);
-					}
-					else if (code == 429)
-					{
-						throw new IOException("Hiscores API rate limit reached. Please wait a moment and try again.");
-					}
-					else
-					{
-						throw new IOException("Hiscores API error (HTTP " + code + "). The service may be temporarily unavailable.");
-					}
+					throw new IOException("Hiscores API rate limit reached. Please wait a moment and try again.");
 				}
 				else
 				{
-					ResponseBody body = response.body();
-					if (body == null)
-					{
-						throw new IOException("Empty response from Hiscores API");
-					}
-					String jsonData = body.string();
-					log.debug("API response received, body length: {} characters", jsonData.length());
+					throw new IOException("Hiscores API error (HTTP " + code + "). The service may be temporarily unavailable.");
+				}
+			}
 
-					PlayerStats result = parseHiscoresJson(username, jsonData);
-					responseCache.put(cacheKey, new CachedResult(result));
-					log.debug("Finished fetching for '{}'", username);
-					return result;
-				}
-			}
-			// Response is now closed — safe to sleep
-			if (shouldRetry)
+			ResponseBody body = response.body();
+			if (body == null)
 			{
-				try
-				{
-					Thread.sleep(backoff);
-				}
-				catch (InterruptedException e)
-				{
-					Thread.currentThread().interrupt();
-					throw new IOException("Interrupted while waiting to retry Hiscores API request", e);
-				}
-				attempt++;
+				throw new IOException("Empty response from Hiscores API");
 			}
+			String jsonData = body.string();
+			log.debug("API response received, body length: {} characters", jsonData.length());
+
+			PlayerStats result = parseHiscoresJson(username, jsonData);
+			responseCache.put(cacheKey, new CachedResult(result));
+			log.debug("Finished fetching for '{}'", username);
+			return result;
 		}
 	}
 

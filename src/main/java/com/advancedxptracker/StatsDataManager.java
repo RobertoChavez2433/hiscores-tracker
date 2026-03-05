@@ -22,6 +22,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import javax.swing.SwingUtilities;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -47,6 +48,7 @@ public class StatsDataManager
 	private Map<String, List<PlayerStats>> allPlayerData = new HashMap<>();
 	private final Object dataLock = new Object();
 	private final AtomicBoolean isDirty = new AtomicBoolean(false);
+	private volatile ScheduledFuture<?> periodicFlushFuture;
 	private volatile boolean initialized = false;
 	private int savesSinceCompaction = 0;
 	private static final int COMPACT_INTERVAL = 50;
@@ -74,7 +76,7 @@ public class StatsDataManager
 	public void initialize(ScheduledExecutorService executor, Runnable onReady)
 	{
 		// Schedule periodic flush
-		executor.scheduleAtFixedRate(() -> {
+		periodicFlushFuture = executor.scheduleAtFixedRate(() -> {
 			if (isDirty.compareAndSet(true, false))
 			{
 				saveAllData();
@@ -101,6 +103,19 @@ public class StatsDataManager
 		if (isDirty.compareAndSet(true, false))
 		{
 			saveAllData();
+		}
+	}
+
+	/**
+	 * Cancel periodic flush task.
+	 * Called from Plugin.shutDown() before executor shutdown.
+	 */
+	public void shutdown()
+	{
+		if (periodicFlushFuture != null)
+		{
+			periodicFlushFuture.cancel(false);
+			periodicFlushFuture = null;
 		}
 	}
 

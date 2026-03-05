@@ -24,7 +24,6 @@ import javax.swing.SwingUtilities;
 import java.awt.image.BufferedImage;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Hiscores Tracker Plugin
@@ -132,7 +131,6 @@ public class AdvancedXpTrackerPlugin extends Plugin
 	{
 		log.info("Hiscores Tracker shutting down");
 
-		// Shutdown panel (cancel timers, clear caches)
 		if (panel != null)
 		{
 			panel.shutDown();
@@ -145,48 +143,24 @@ public class AdvancedXpTrackerPlugin extends Plugin
 
 		if (autoFetchExecutor != null)
 		{
-			autoFetchExecutor.shutdown();
-			try
-			{
-				if (!autoFetchExecutor.awaitTermination(5, TimeUnit.SECONDS))
-				{
-					autoFetchExecutor.shutdownNow();
-				}
-			}
-			catch (InterruptedException e)
-			{
-				autoFetchExecutor.shutdownNow();
-				Thread.currentThread().interrupt();
-			}
+			autoFetchExecutor.shutdownNow();
+		}
+
+		if (dataManager != null)
+		{
+			dataManager.shutdown();
 		}
 
 		if (executor != null)
 		{
-			// Submit flush to executor queue — serializes after any in-flight snapshot tasks
-			if (dataManager != null)
-			{
-				executor.submit(dataManager::flush);
-			}
-			executor.shutdown();
-			try
-			{
-				if (!executor.awaitTermination(5, TimeUnit.SECONDS))
-				{
-					executor.shutdownNow();
-				}
-			}
-			catch (InterruptedException e)
-			{
-				executor.shutdownNow();
-				Thread.currentThread().interrupt();
-			}
+			executor.shutdownNow();
 		}
+
 		if (navButton != null)
 		{
 			clientToolbar.removeNavigation(navButton);
 		}
 
-		// Reset state
 		loggedInUsername = null;
 		lastAccountHash = -1L;
 		initializeTracker = 0;
